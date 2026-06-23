@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["crates/equivault-core", "crates/equivault-tui"]

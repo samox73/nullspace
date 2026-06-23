@@ -1,0 +1,18 @@
+[package]
+name = "equivault-tui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "equivault"
+path = "src/main.rs"
+
+[dependencies]
+equivault-core = { path = "../equivault-core" }
+ratatui = "0.30"
+crossterm = "0.28"
+ratatui-image = "2"
+tui-textarea = { version = "0.7", features = ["crossterm"] }
+directories = "5"
+anyhow = "1"
+image = "0.25"
