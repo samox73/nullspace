@@ -69,6 +69,7 @@ pub struct AppState {
     pub all_items: Vec<EquationSummary>,
     pub items: Vec<EquationSummary>,
     pub browser_filter: BrowserFilter,
+    pub browser_filter_cursor: usize,
     pub cursor: usize,
     pub focus: Pane,
     pub should_quit: bool,
@@ -128,6 +129,7 @@ impl AppState {
             all_items: Vec::new(),
             items: Vec::new(),
             browser_filter: BrowserFilter::None,
+            browser_filter_cursor: 0,
             cursor: 0,
             focus: Pane::List,
             should_quit: false,
@@ -244,6 +246,7 @@ impl AppState {
 
     fn clear_browser_filter(&mut self) -> anyhow::Result<()> {
         self.browser_filter = BrowserFilter::None;
+        self.browser_filter_cursor = 0;
         self.refresh_items()?;
         self.status = "Filter cleared".to_string();
         self.schedule_selected();
@@ -256,23 +259,50 @@ impl AppState {
             BrowserFilter::Search(query) | BrowserFilter::Variable(query) => query,
             BrowserFilter::None => return Ok(()),
         };
+        self.browser_filter_cursor = self.browser_filter_cursor.min(query.len());
+        let mut changed = false;
         match key.code {
-            KeyCode::Char(ch) => query.push(ch),
-            KeyCode::Backspace => {
-                query.pop();
+            KeyCode::Char(ch) => {
+                query.insert(self.browser_filter_cursor, ch);
+                self.browser_filter_cursor += ch.len_utf8();
+                changed = true;
             }
-            KeyCode::Delete => query.clear(),
+            KeyCode::Backspace => {
+                if self.browser_filter_cursor > 0 {
+                    let previous = prev_boundary(query, self.browser_filter_cursor);
+                    query.drain(previous..self.browser_filter_cursor);
+                    self.browser_filter_cursor = previous;
+                    changed = true;
+                }
+            }
+            KeyCode::Delete => {
+                if self.browser_filter_cursor < query.len() {
+                    let next = next_boundary(query, self.browser_filter_cursor);
+                    query.drain(self.browser_filter_cursor..next);
+                    changed = true;
+                }
+            }
+            KeyCode::Left => {
+                self.browser_filter_cursor = prev_boundary(query, self.browser_filter_cursor);
+            }
+            KeyCode::Right => {
+                self.browser_filter_cursor = next_boundary(query, self.browser_filter_cursor);
+            }
+            KeyCode::Home => self.browser_filter_cursor = 0,
+            KeyCode::End => self.browser_filter_cursor = query.len(),
             _ => {}
         }
-        self.cursor = 0;
-        self.refresh_items()?;
-        let label = match &self.browser_filter {
-            BrowserFilter::Search(_) => "Search",
-            BrowserFilter::Variable(_) => "Variable lookup",
-            BrowserFilter::None => "Filter",
-        };
-        self.status = format!("{label}: {} match(es)", self.items.len());
-        self.schedule_selected();
+        if changed {
+            self.cursor = 0;
+            self.refresh_items()?;
+            let label = match &self.browser_filter {
+                BrowserFilter::Search(_) => "Search",
+                BrowserFilter::Variable(_) => "Variable lookup",
+                BrowserFilter::None => "Filter",
+            };
+            self.status = format!("{label}: {} match(es)", self.items.len());
+            self.schedule_selected();
+        }
         Ok(())
     }
 
@@ -319,6 +349,7 @@ impl AppState {
             }
             Action::StartSearch => {
                 self.browser_filter = BrowserFilter::Search(String::new());
+                self.browser_filter_cursor = 0;
                 self.mode = Mode::Search;
                 self.refresh_items()?;
                 self.status = "Search".to_string();
@@ -327,6 +358,7 @@ impl AppState {
             }
             Action::StartVariableLookup => {
                 self.browser_filter = BrowserFilter::Variable(String::new());
+                self.browser_filter_cursor = 0;
                 self.mode = Mode::VariableLookup;
                 self.refresh_items()?;
                 self.status = "Variable lookup".to_string();
@@ -533,7 +565,7 @@ impl AppState {
             match result.outcome {
                 ProtocolWarmOutcome::Ready(protocol) => {
                     if result.key != self.preview_cache_key || self.preview_protocol.is_none() {
-                        self.remember_protocol(result.key, protocol);
+                        self.remember_protocol(result.key, *protocol);
                     }
                 }
                 ProtocolWarmOutcome::Failed => {}
@@ -1064,10 +1096,22 @@ impl AppState {
         equation.related = parse_related(&editor.fields[6], &self.all_items);
         equation.updated_at = nullspace_core::store::now_rfc3339();
         let saved_id = equation.id;
-        if editor.editing.is_some() {
-            self.store.update(&equation)?;
+        let save_result = if editor.editing.is_some() {
+            self.store.update(&equation)
         } else {
-            self.store.insert(&equation)?;
+            self.store.insert(&equation)
+        };
+        match save_result {
+            Ok(()) => {}
+            Err(nullspace_core::Error::Duplicate(_)) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.dirty = false;
+                    editor.last_saved_signature = signature;
+                }
+                self.status = "An equation with this LaTeX already exists.".to_string();
+                return Ok(());
+            }
+            Err(err) => return Err(err.into()),
         }
         self.reload()?;
         if let Some(index) = self.items.iter().position(|item| item.id == saved_id) {

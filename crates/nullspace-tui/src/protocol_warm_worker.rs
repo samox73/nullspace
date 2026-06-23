@@ -16,7 +16,7 @@ pub struct ProtocolWarmResult {
 }
 
 pub enum ProtocolWarmOutcome {
-    Ready(StatefulProtocol),
+    Ready(Box<StatefulProtocol>),
     Failed,
 }
 
@@ -54,7 +54,7 @@ impl ProtocolWarmWorker {
 fn warm_protocol(mut job: ProtocolWarmJob, result_tx: &Sender<ProtocolWarmResult>) {
     job.protocol.resize_encode(&Resize::Fit(None), job.size);
     let outcome = match job.protocol.last_encoding_result() {
-        Some(Ok(())) => ProtocolWarmOutcome::Ready(job.protocol),
+        Some(Ok(())) => ProtocolWarmOutcome::Ready(Box::new(job.protocol)),
         Some(Err(_)) | None => ProtocolWarmOutcome::Failed,
     };
     let _ = result_tx.send(ProtocolWarmResult {

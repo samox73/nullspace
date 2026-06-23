@@ -15,7 +15,7 @@ use std::time::Duration;
 use anyhow::Context;
 use app::AppState;
 use crossterm::event as ct_event;
-use nullspace_core::{Equation, Store};
+use nullspace_core::{DuplicatePolicy, Equation, Store};
 
 fn main() -> anyhow::Result<()> {
     let default_hook = std::panic::take_hook();
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if let Some(path) = args.import_path {
-        import_json(&db_path, &path)?;
+        import_json(&db_path, &path, args.duplicate_policy)?;
         return Ok(());
     }
 
@@ -48,12 +48,14 @@ fn main() -> anyhow::Result<()> {
 struct Args {
     export_path: Option<PathBuf>,
     import_path: Option<PathBuf>,
+    duplicate_policy: DuplicatePolicy,
 }
 
 impl Args {
     fn parse() -> anyhow::Result<Self> {
         let mut export_path = None;
         let mut import_path = None;
+        let mut duplicate_policy = DuplicatePolicy::Skip;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -67,9 +69,22 @@ impl Args {
                         args.next().context("--import requires a path")?,
                     ));
                 }
+                "--on-duplicate" => {
+                    duplicate_policy = parse_duplicate_policy(
+                        &args
+                            .next()
+                            .context("--on-duplicate requires skip or overwrite")?,
+                    )?;
+                }
                 "--help" | "-h" => {
-                    println!("Usage: nullspace [--export PATH] [--import PATH]");
+                    println!(
+                        "Usage: nullspace [--export PATH] [--import PATH] [--on-duplicate skip|overwrite]"
+                    );
                     std::process::exit(0);
+                }
+                other if other.starts_with("--on-duplicate=") => {
+                    duplicate_policy =
+                        parse_duplicate_policy(other.trim_start_matches("--on-duplicate="))?;
                 }
                 other => anyhow::bail!("unknown argument: {other}"),
             }
@@ -80,7 +95,16 @@ impl Args {
         Ok(Self {
             export_path,
             import_path,
+            duplicate_policy,
         })
+    }
+}
+
+fn parse_duplicate_policy(raw: &str) -> anyhow::Result<DuplicatePolicy> {
+    match raw {
+        "skip" => Ok(DuplicatePolicy::Skip),
+        "overwrite" => Ok(DuplicatePolicy::Overwrite),
+        other => anyhow::bail!("unknown duplicate policy: {other}"),
     }
 }
 
@@ -97,14 +121,20 @@ fn export_json(db_path: &std::path::Path, output_path: &std::path::Path) -> anyh
     Ok(())
 }
 
-fn import_json(db_path: &std::path::Path, input_path: &std::path::Path) -> anyhow::Result<()> {
+fn import_json(
+    db_path: &std::path::Path,
+    input_path: &std::path::Path,
+    policy: DuplicatePolicy,
+) -> anyhow::Result<()> {
     let raw = std::fs::read_to_string(input_path)?;
     let equations: Vec<Equation> = serde_json::from_str(&raw)?;
     let mut store = Store::open(db_path)?;
-    store.import_equations(&equations)?;
+    let summary = store.import_equations(&equations, policy)?;
     println!(
-        "imported {} equation(s) from {}",
-        equations.len(),
+        "imported {} new, updated {}, skipped {} duplicate(s) from {}",
+        summary.inserted,
+        summary.updated,
+        summary.skipped,
         input_path.display()
     );
     Ok(())

@@ -120,7 +120,7 @@ pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Mode::VariableLookup => "type symbol  enter apply  esc clear",
         Mode::Editor => "tab field  esc back",
         Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
-        Mode::ConfirmDelete(_) => "y confirm  n/esc cancel",
+        Mode::ConfirmDelete(_) => "y/d/enter confirm  n/esc cancel",
         Mode::ConfirmRemoveRelated(_) => "y remove relation  n/esc cancel",
     };
     let graphics = if app.graphics_ok {

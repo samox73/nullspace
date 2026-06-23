@@ -26,13 +26,17 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         Mode::Search | Mode::VariableLookup => match key.code {
             KeyCode::Esc => Action::BrowserFilterCancel,
             KeyCode::Enter => Action::BrowserFilterAccept,
-            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                Action::BrowserFilterInput(key)
-            }
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Char(_) => Action::BrowserFilterInput(key),
             _ => Action::None,
         },
         Mode::ConfirmDelete(_) => match key.code {
-            KeyCode::Char('y') => Action::ConfirmYes,
+            KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => Action::ConfirmYes,
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmNo,
             _ => Action::None,
         },

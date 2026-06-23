@@ -1,12 +1,27 @@
 mod migrations;
 
 use crate::error::{Error, Result};
+use crate::identity::equation_identity;
 use crate::model::*;
 use rusqlite::{params, Connection, OptionalExtension, Row};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub struct Store {
     conn: Connection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuplicatePolicy {
+    Skip,
+    Overwrite,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImportSummary {
+    pub inserted: usize,
+    pub updated: usize,
+    pub skipped: usize,
 }
 
 pub fn now_rfc3339() -> String {
@@ -50,6 +65,7 @@ impl Store {
              LEFT JOIN tags t ON t.equation_id = e.id
              WHERE lower(e.name)        LIKE ?1 ESCAPE '\\'
                 OR lower(e.description) LIKE ?1 ESCAPE '\\'
+                OR lower(e.latex)       LIKE ?1 ESCAPE '\\'
                 OR lower(t.tag)         LIKE ?1 ESCAPE '\\'
              ORDER BY e.name COLLATE NOCASE",
         )?;
@@ -80,17 +96,68 @@ impl Store {
             .collect()
     }
 
-    pub fn import_equations(&mut self, equations: &[Equation]) -> Result<()> {
+    pub fn import_equations(
+        &mut self,
+        equations: &[Equation],
+        policy: DuplicatePolicy,
+    ) -> Result<ImportSummary> {
         let tx = self.conn.transaction()?;
+        let existing_ids = load_existing_ids(&tx)?;
+        let mut existing_by_norm = load_existing_by_norm(&tx)?;
+        let mut seen_norm = HashMap::new();
+        let mut id_map = HashMap::new();
+        let mut scheduled = Vec::new();
+        let mut summary = ImportSummary::default();
+
         for equation in equations {
-            upsert_equation_row(&tx, equation)?;
-            delete_children_conn(&tx, equation.id)?;
+            let norm = equation_identity(&equation.latex);
+            if existing_ids.contains(&equation.id) {
+                seen_norm.insert(norm.clone(), equation.id);
+                id_map.insert(equation.id, equation.id);
+                scheduled.push(equation.clone());
+                summary.updated += 1;
+            } else if let Some(canonical_id) = seen_norm.get(&norm).copied() {
+                id_map.insert(equation.id, canonical_id);
+                summary.skipped += 1;
+            } else if let Some(canonical_id) = existing_by_norm.get(&norm).copied() {
+                id_map.insert(equation.id, canonical_id);
+                seen_norm.insert(norm, canonical_id);
+                match policy {
+                    DuplicatePolicy::Skip => {
+                        summary.skipped += 1;
+                    }
+                    DuplicatePolicy::Overwrite => {
+                        let mut canonical = equation.clone();
+                        canonical.id = canonical_id;
+                        scheduled.push(canonical);
+                        summary.updated += 1;
+                    }
+                }
+            } else {
+                seen_norm.insert(norm.clone(), equation.id);
+                existing_by_norm.insert(norm, equation.id);
+                id_map.insert(equation.id, equation.id);
+                scheduled.push(equation.clone());
+                summary.inserted += 1;
+            }
         }
-        for equation in equations {
-            insert_children(&tx, equation)?;
+
+        for equation in &scheduled {
+            upsert_equation_row(&tx, equation)?;
+        }
+        for equation in &scheduled {
+            delete_children_conn(&tx, equation.id)?;
+            let mut equation = equation.clone();
+            equation.related = equation
+                .related
+                .into_iter()
+                .map(|id| id_map.get(&id).copied().unwrap_or(id))
+                .filter(|id| *id != equation.id)
+                .collect();
+            insert_children(&tx, &equation)?;
         }
         tx.commit()?;
-        Ok(())
+        Ok(summary)
     }
 
     pub fn get(&self, id: EquationId) -> Result<Equation> {
@@ -137,18 +204,20 @@ impl Store {
 
     pub fn update(&mut self, eq: &Equation) -> Result<()> {
         let tx = self.conn.transaction()?;
+        let latex_norm = equation_identity(&eq.latex);
         let changed = tx.execute(
-            "UPDATE equations SET name=?2, description=?3, latex=?4, px_height=?5, created_at=?6, updated_at=?7 WHERE id=?1",
+            "UPDATE equations SET name=?2, description=?3, latex=?4, latex_norm=?5, px_height=?6, created_at=?7, updated_at=?8 WHERE id=?1",
             params![
                 eq.id.to_string(),
                 eq.name,
                 eq.description,
                 eq.latex,
+                latex_norm,
                 eq.px_height as i64,
                 eq.created_at,
                 eq.updated_at
             ],
-        )?;
+        ).map_err(|err| duplicate_or_db(err, &eq.latex))?;
         if changed == 0 {
             return Err(Error::NotFound(eq.id.to_string()));
         }
@@ -242,29 +311,34 @@ impl Store {
 }
 
 fn insert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
+    let latex_norm = equation_identity(&eq.latex);
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             eq.id.to_string(),
             eq.name,
             eq.description,
             eq.latex,
+            latex_norm,
             eq.px_height as i64,
             eq.created_at,
             eq.updated_at
         ],
-    )?;
+    )
+    .map_err(|err| duplicate_or_db(err, &eq.latex))?;
     Ok(())
 }
 
 fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
+    let latex_norm = equation_identity(&eq.latex);
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             description=excluded.description,
             latex=excluded.latex,
+            latex_norm=excluded.latex_norm,
             px_height=excluded.px_height,
             created_at=excluded.created_at,
             updated_at=excluded.updated_at",
@@ -273,12 +347,49 @@ fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
             eq.name,
             eq.description,
             eq.latex,
+            latex_norm,
             eq.px_height as i64,
             eq.created_at,
             eq.updated_at
         ],
-    )?;
+    )
+    .map_err(|err| duplicate_or_db(err, &eq.latex))?;
     Ok(())
+}
+
+fn load_existing_ids(conn: &Connection) -> Result<HashSet<EquationId>> {
+    let mut stmt = conn.prepare("SELECT id FROM equations")?;
+    let rows = stmt.query_map([], |row| {
+        let raw_id: String = row.get(0)?;
+        parse_id_col(&raw_id)
+    })?;
+    rows.collect::<std::result::Result<HashSet<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn load_existing_by_norm(conn: &Connection) -> Result<HashMap<String, EquationId>> {
+    let mut stmt = conn.prepare("SELECT id, latex FROM equations")?;
+    let rows = stmt.query_map([], |row| {
+        let raw_id: String = row.get(0)?;
+        let latex: String = row.get(1)?;
+        Ok((equation_identity(&latex), parse_id_col(&raw_id)?))
+    })?;
+    rows.collect::<std::result::Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
+fn duplicate_or_db(err: rusqlite::Error, latex: &str) -> Error {
+    if is_unique_violation(&err) {
+        Error::Duplicate(latex.to_string())
+    } else {
+        Error::Db(err)
+    }
+}
+
+fn is_unique_violation(err: &rusqlite::Error) -> bool {
+    matches!(err, rusqlite::Error::SqliteFailure(e, _)
+        if e.code == rusqlite::ErrorCode::ConstraintViolation
+            && e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
 }
 
 fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
@@ -373,9 +484,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
 
     fn full_equation(name: &str) -> Equation {
-        let mut eq = Equation::new(name.to_string(), "E = mc^2".to_string());
+        let mut eq = Equation::new(name.to_string(), format!("{name} = mc^2"));
         eq.description = "mass energy".to_string();
         eq.px_height = 48;
         eq.variables = vec![
@@ -424,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn search_matches_name_description_and_tags() {
+    fn search_matches_name_description_latex_and_tags() {
         let mut store = Store::open_in_memory().unwrap();
         let mut energy = full_equation("Energy");
         energy.description = "mass energy".to_string();
@@ -441,6 +553,9 @@ mod tests {
         let circle = store.search("circle").unwrap();
         assert_eq!(circle.len(), 1);
         assert_eq!(circle[0].name, "Area");
+        let latex = store.search("\\pi").unwrap();
+        assert_eq!(latex.len(), 1);
+        assert_eq!(latex[0].name, "Area");
     }
 
     #[test]
@@ -472,7 +587,9 @@ mod tests {
 
         let exported = source.all().unwrap();
         let mut target = Store::open_in_memory().unwrap();
-        target.import_equations(&exported).unwrap();
+        target
+            .import_equations(&exported, DuplicatePolicy::Skip)
+            .unwrap();
 
         assert_eq!(target.all().unwrap().len(), 2);
         assert!(target.get(a.id).unwrap().related.contains(&b.id));
@@ -534,7 +651,7 @@ mod tests {
             .insert(&Equation::new("50% off".to_string(), "x".to_string()))
             .unwrap();
         store
-            .insert(&Equation::new("500 off".to_string(), "x".to_string()))
+            .insert(&Equation::new("500 off".to_string(), "y".to_string()))
             .unwrap();
         let results = store.search("50%").unwrap();
         assert_eq!(results.len(), 1);
@@ -550,5 +667,236 @@ mod tests {
         let results = store.search("PHYSICS").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Energy");
+    }
+
+    #[test]
+    fn insert_rejects_duplicate_latex_identity() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .insert(&Equation::new("Energy".to_string(), "E=mc^2".to_string()))
+            .unwrap();
+        let err = store
+            .insert(&Equation::new(
+                "Energy 2".to_string(),
+                "E = mc^2".to_string(),
+            ))
+            .unwrap_err();
+        assert!(matches!(err, Error::Duplicate(latex) if latex == "E = mc^2"));
+    }
+
+    #[test]
+    fn insert_allows_distinct_latex_identity() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .insert(&Equation::new("Upper".to_string(), "\\Pi".to_string()))
+            .unwrap();
+        store
+            .insert(&Equation::new("Lower".to_string(), "\\pi".to_string()))
+            .unwrap();
+        assert_eq!(store.all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn import_skips_content_duplicate() {
+        let mut store = Store::open_in_memory().unwrap();
+        let first = Equation::new("First".to_string(), "E=mc^2".to_string());
+        store
+            .import_equations(&[first], DuplicatePolicy::Skip)
+            .unwrap();
+        let second = Equation::new("Second".to_string(), "E = mc^2".to_string());
+
+        let summary = store
+            .import_equations(&[second], DuplicatePolicy::Skip)
+            .unwrap();
+
+        assert_eq!(
+            summary,
+            ImportSummary {
+                inserted: 0,
+                updated: 0,
+                skipped: 1
+            }
+        );
+        assert_eq!(store.all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn import_same_file_twice_is_idempotent() {
+        let mut store = Store::open_in_memory().unwrap();
+        let equations = vec![
+            Equation::new("A".to_string(), "a".to_string()),
+            Equation::new("B".to_string(), "b".to_string()),
+        ];
+
+        let first = store
+            .import_equations(&equations, DuplicatePolicy::Skip)
+            .unwrap();
+        let second = store
+            .import_equations(&equations, DuplicatePolicy::Skip)
+            .unwrap();
+
+        assert_eq!(
+            first,
+            ImportSummary {
+                inserted: 2,
+                updated: 0,
+                skipped: 0
+            }
+        );
+        assert_eq!(
+            second,
+            ImportSummary {
+                inserted: 0,
+                updated: 2,
+                skipped: 0
+            }
+        );
+        assert_eq!(store.all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn import_overwrite_updates_canonical() {
+        let mut store = Store::open_in_memory().unwrap();
+        let canonical = Equation::new("Canonical".to_string(), "E=mc^2".to_string());
+        let canonical_id = canonical.id;
+        store
+            .import_equations(&[canonical], DuplicatePolicy::Skip)
+            .unwrap();
+        let mut incoming = Equation::new("Replacement".to_string(), "E = mc^2".to_string());
+        incoming.description = "new metadata".to_string();
+
+        let summary = store
+            .import_equations(&[incoming], DuplicatePolicy::Overwrite)
+            .unwrap();
+        let got = store.get(canonical_id).unwrap();
+
+        assert_eq!(
+            summary,
+            ImportSummary {
+                inserted: 0,
+                updated: 1,
+                skipped: 0
+            }
+        );
+        assert_eq!(store.all().unwrap().len(), 1);
+        assert_eq!(got.name, "Replacement");
+        assert_eq!(got.description, "new metadata");
+    }
+
+    #[test]
+    fn import_remaps_related_to_canonical() {
+        let mut store = Store::open_in_memory().unwrap();
+        let canonical = Equation::new("Canonical".to_string(), "E=mc^2".to_string());
+        let canonical_id = canonical.id;
+        store
+            .import_equations(&[canonical], DuplicatePolicy::Skip)
+            .unwrap();
+
+        let duplicate = Equation::new("Duplicate".to_string(), "E = mc^2".to_string());
+        let mut new_eq = Equation::new("New".to_string(), "x".to_string());
+        new_eq.related.push(duplicate.id);
+        let new_id = new_eq.id;
+
+        let summary = store
+            .import_equations(&[duplicate, new_eq], DuplicatePolicy::Skip)
+            .unwrap();
+
+        assert_eq!(
+            summary,
+            ImportSummary {
+                inserted: 1,
+                updated: 0,
+                skipped: 1
+            }
+        );
+        assert!(store.get(new_id).unwrap().related.contains(&canonical_id));
+        assert!(store.get(canonical_id).unwrap().related.contains(&new_id));
+    }
+
+    #[test]
+    fn migration_dedups_existing_rows_and_preserves_relations() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE equations (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                latex       TEXT NOT NULL,
+                px_height   INTEGER NOT NULL DEFAULT 48,
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+            CREATE TABLE related (
+                a TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                b TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                PRIMARY KEY (a, b),
+                CHECK (a < b)
+            );
+            PRAGMA user_version = 1;
+            "#,
+        )
+        .unwrap();
+        let survivor = EquationId::new().to_string();
+        let duplicate = EquationId::new().to_string();
+        let other = EquationId::new().to_string();
+        conn.execute(
+            "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at)
+             VALUES (?1, 'survivor', '', 'E=mc^2', 48, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+            params![survivor],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at)
+             VALUES (?1, 'duplicate', '', 'E = mc^2', 48, '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z')",
+            params![duplicate],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at)
+             VALUES (?1, 'other', '', 'x', 48, '2024-01-03T00:00:00Z', '2024-01-03T00:00:00Z')",
+            params![other],
+        )
+        .unwrap();
+        let (a, b) = if duplicate < other {
+            (duplicate.clone(), other.clone())
+        } else {
+            (other.clone(), duplicate.clone())
+        };
+        conn.execute("INSERT INTO related (a, b) VALUES (?1, ?2)", params![a, b])
+            .unwrap();
+
+        migrations::migrate(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM equations", [], |row| row.get(0))
+            .unwrap();
+        let duplicate_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM equations WHERE id=?1",
+                params![duplicate],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let relation_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM related WHERE (a=?1 AND b=?2) OR (a=?2 AND b=?1)",
+                params![survivor, other],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_equations_latex_norm'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(duplicate_count, 0);
+        assert_eq!(relation_count, 1);
+        assert_eq!(index_count, 1);
     }
 }

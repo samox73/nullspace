@@ -6,6 +6,8 @@ pub enum Error {
     Db(#[from] rusqlite::Error),
     #[error("equation not found: {0}")]
     NotFound(String),
+    #[error("duplicate equation: {0}")]
+    Duplicate(String),
     #[error("render error: {0}")]
     Render(String),
     #[error("io error: {0}")]
