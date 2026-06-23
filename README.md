@@ -32,7 +32,6 @@ NULLSPACE_DB=/path/to/library.sqlite3 cargo run -p nullspace-tui
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or `↓` / `↑`) | Move selection |
-| `h` / `l` | Focus list / preview |
 | `Enter` | Edit the selected equation |
 | `n` | New equation |
 | `c` | Copy the selected equation |
@@ -48,7 +47,6 @@ NULLSPACE_DB=/path/to/library.sqlite3 cargo run -p nullspace-tui
 | Key | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Next / previous field |
-| `Ctrl-S` | Save |
 | `Esc` | Back |
 
 In the **Related** field: `r` to choose equations from the library, `Enter` to open

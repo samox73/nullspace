@@ -1,7 +1,6 @@
-use nullspace_core::render::to_unicode_approx;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect, Size},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Direction, Layout, Rect, Size},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -45,30 +44,20 @@ pub fn preview_pane(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, title
         return;
     }
 
-    let caption_height = if app.preview_latex.is_empty() { 0 } else { 5 }.min(inner.height);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(caption_height)])
-        .split(inner);
     app.set_preview_warm_size(Size {
-        width: chunks[0].width,
-        height: chunks[0].height,
+        width: inner.width,
+        height: inner.height,
     });
 
-    frame.render_widget(Paragraph::new("Rendering..."), chunks[0]);
-
-    if !app.preview_latex.is_empty() {
-        let lines = vec![
-            Line::from(""),
-            Line::styled(
-                to_unicode_approx(&app.preview_latex),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::from(""),
-            Line::from(app.preview_latex.clone()),
-        ];
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[1]);
-    }
+    let spinner = app.cache_spinner();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(spinner).alignment(Alignment::Center),
+        rows[1],
+    );
 }
 
 fn render_stale_warning(error: &str) -> Paragraph<'_> {

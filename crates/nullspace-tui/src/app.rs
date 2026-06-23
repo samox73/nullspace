@@ -85,6 +85,8 @@ pub struct AppState {
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
     pub cursor: usize,
+    pub list_scroll_offset: usize,
+    pub list_visible_height: u16,
     pub focus: Pane,
     pub should_quit: bool,
     pub graphics_ok: bool,
@@ -145,6 +147,8 @@ impl AppState {
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
             cursor: 0,
+            list_scroll_offset: 0,
+            list_visible_height: 0,
             focus: Pane::List,
             should_quit: false,
             graphics_ok,
@@ -258,6 +262,7 @@ impl AppState {
             BrowserFilter::Variable(symbol) => self.store.by_symbol(symbol)?,
         };
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+        self.list_scroll_offset = self.list_scroll_offset.min(self.cursor);
         self.selected = self.selected_id().and_then(|id| self.store.get(id).ok());
         Ok(())
     }
@@ -333,6 +338,9 @@ impl AppState {
             Action::MoveUp => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
+                    if self.cursor < self.list_scroll_offset {
+                        self.list_scroll_offset = self.cursor;
+                    }
                     self.selected = self.selected_id().and_then(|id| self.store.get(id).ok());
                     self.schedule_selected();
                 }
@@ -341,6 +349,10 @@ impl AppState {
             Action::MoveDown => {
                 if self.cursor + 1 < self.items.len() {
                     self.cursor += 1;
+                    let visible = list_visible_item_count(self.list_visible_height).max(1);
+                    if self.cursor >= self.list_scroll_offset + visible {
+                        self.list_scroll_offset = self.cursor + 1 - visible;
+                    }
                     self.selected = self.selected_id().and_then(|id| self.store.get(id).ok());
                     self.schedule_selected();
                 }
@@ -1125,12 +1137,16 @@ impl AppState {
         equation.description = fields[1].trim().to_string();
         equation.latex = fields[2].trim().to_string();
         equation.references = parse_refs(&fields[3]);
-        equation.tags = fields[4]
-            .split(',')
-            .map(str::trim)
-            .filter(|tag| !tag.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
+        equation.tags = {
+            let mut seen = std::collections::HashSet::new();
+            fields[4]
+                .split(',')
+                .map(str::trim)
+                .filter(|tag| !tag.is_empty())
+                .filter(|tag| seen.insert(*tag))
+                .map(ToOwned::to_owned)
+                .collect()
+        };
         equation.variables = parse_variables(&fields[5]);
         equation.related = parse_related(&fields[6], &self.all_items);
         equation.updated_at = nullspace_core::store::now_rfc3339();
@@ -1336,6 +1352,7 @@ fn format_variables(variables: &[Variable]) -> String {
 }
 
 fn parse_variables(raw: &str) -> Vec<Variable> {
+    let mut seen = std::collections::HashSet::new();
     raw.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -1346,6 +1363,7 @@ fn parse_variables(raw: &str) -> Vec<Variable> {
                 description: parts.next().unwrap_or_default().to_string(),
             }
         })
+        .filter(|v| seen.insert(v.symbol.clone()))
         .collect()
 }
 
@@ -1410,6 +1428,12 @@ fn fuzzy_subsequence(needle: &str, haystack: &str) -> bool {
         }
     }
     false
+}
+
+// Each list item renders as 2 lines; spacers between items are 1 line each.
+// From height H rows: fit k items where 3k-1 <= H, so k = (H+1)/3.
+fn list_visible_item_count(height: u16) -> usize {
+    (height as usize + 1) / 3
 }
 
 fn prev_boundary(value: &str, cursor: usize) -> usize {

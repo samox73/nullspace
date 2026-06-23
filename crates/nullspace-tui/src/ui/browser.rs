@@ -48,7 +48,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             std::iter::once(item).chain(spacer)
         })
         .collect::<Vec<_>>();
-    let mut state = ListState::default();
+    app.list_visible_height = panes[0].height.saturating_sub(2);
+    let mut state = ListState::default().with_offset(app.list_scroll_offset * 2);
     if !items.is_empty() {
         state.select(Some(app.cursor * 2));
     }

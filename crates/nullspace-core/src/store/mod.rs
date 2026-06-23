@@ -396,13 +396,13 @@ fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
     let id = eq.id.to_string();
     for (position, variable) in eq.variables.iter().enumerate() {
         conn.execute(
-            "INSERT INTO variables (equation_id, symbol, description, position) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO variables (equation_id, symbol, description, position) VALUES (?1, ?2, ?3, ?4)",
             params![id, variable.symbol, variable.description, position as i64],
         )?;
     }
     for tag in &eq.tags {
         conn.execute(
-            "INSERT INTO tags (equation_id, tag) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO tags (equation_id, tag) VALUES (?1, ?2)",
             params![id, tag],
         )?;
     }
