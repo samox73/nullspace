@@ -26,7 +26,7 @@ impl RenderWorker {
         let (result_tx, result_rx) = mpsc::channel::<RenderResult>();
         thread::spawn(move || {
             while let Ok(job) = job_rx.recv() {
-                let image = equivault_core::render::render_image(&job.latex, job.px);
+                let image = nullspace_core::render::render_image(&job.latex, job.px);
                 let _ = result_tx.send(RenderResult {
                     generation: job.generation,
                     latex: job.latex,

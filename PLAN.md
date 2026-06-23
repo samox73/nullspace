@@ -1,4 +1,4 @@
-# EquiVault — Implementation Plan (executable checklist)
+# Nullspace — Implementation Plan (executable checklist)
 
 A terminal (TUI) app in Rust to store, browse, and edit equations written in LaTeX, with
 live in-terminal rendering on a graphics-capable terminal (Kitty / WezTerm / Ghostty /
@@ -9,6 +9,43 @@ foot / iTerm2 / Sixel-xterm).
 > (DoD) gate. Each phase ends with exact `cargo` commands that must succeed before moving
 > on. When a code block says "exact", type it as written; when it says "reference", adapt
 > it but keep the given function signatures — other code depends on them.
+
+---
+
+## Current status (2026-06-23) — read before continuing
+
+Phases 0–5 are **implemented and the workspace builds** (`cargo build --workspace` is
+green). The implementation deliberately diverged from this plan in several good ways;
+the plan below has been annotated to match. **One flagship feature is not yet wired:
+actual image display in the terminal.**
+
+### As-built deviations from the original plan (all intended, keep them)
+- **No separate `Detail` mode.** The editor doubles as the detail view: `Enter`/`e` on a
+  row opens the equation in the editor (read + edit in one place). `Mode` is now:
+  `Browser`, `Editor`, `RelatedPicker`, `ConfirmDelete(id)`, `ConfirmRemoveRelated(id)`.
+- **Editor is hand-rolled**, not `tui-textarea`: `EditorState { fields: [String; 7],
+  cursors: [usize; 7], ... }` with manual UTF-8 cursor movement. `tui-textarea` dependency
+  removed.
+- **Related-equation picker** (`RelatedPicker`) with fuzzy subsequence search, multi-select
+  (`space`), and a nested-editor history stack (open a related equation from inside the
+  editor, `Esc` pops back).
+- **Autosave**: a dirty editor persists ~300ms after the last change (`persist_editor`);
+  `Ctrl-S` also saves. Save is gated on non-empty name + latex and a successful
+  `render_image` of the latex.
+- **Notifications** (transient toast, bottom-right, 3s) + a status bar.
+- **Graphics detection is an env-var heuristic** in `app.rs::terminal_graphics_detected`
+  (checks `KITTY_WINDOW_ID`, `WEZTERM_PANE`, `TERM`, `TERM_PROGRAM`). It does **not** yet
+  use `ratatui-image`'s `Picker`. The status bar shows "terminal graphics detected" or not.
+
+### THE GAP — image display is not actually wired (blocks the core feature)
+`ui/widgets.rs::preview_pane` currently prints **text** — `"Rendered image: W x H px"`,
+the unicode approximation, and the raw latex. The `RgbaImage` from the render worker is
+produced and cached but **never drawn as a real terminal image**. So "render LaTeX live in
+the terminal" does not visibly work yet, *even though the pipeline behind it runs.*
+
+This is now **Phase 6 (display wiring)** below and must be done before the RaTeX swap is
+worth doing. The dependency fix above (ratatui-image 11) is the prerequisite and is
+already applied.
 
 ---
 
@@ -24,7 +61,7 @@ foot / iTerm2 / Sixel-xterm).
 - **Never change `latex` handling:** LaTeX text is the canonical source of truth. Images
   and unicode are always derived, never stored as truth.
 - **Commit after each green phase** (if the user initialises git): `phase N: <summary>`.
-- **Keep `equivault-core` free of `ratatui`, `crossterm`, `ratatui-image`,
+- **Keep `nullspace-core` free of `ratatui`, `crossterm`, `ratatui-image`,
   `tui-textarea`.** Only `String`, `image::RgbaImage`, and the domain types defined here
   may cross the boundary. This is a hard rule; a future GUI depends on it.
 
@@ -42,26 +79,37 @@ foot / iTerm2 / Sixel-xterm).
 | `usvg` | `0.44` | core (RaTeX phase) |
 | `tiny-skia` | `0.11` | core (RaTeX phase) |
 | `ratex-svg` | `*` (0.0.x) | core (RaTeX phase, isolated) |
-| `ratatui` | `0.30` | tui |
-| `crossterm` | `0.28` | tui |
-| `ratatui-image` | `2` | tui |
-| `tui-textarea` (feature `crossterm`) | `0.7` | tui |
+| `ratatui` | `0.30` (resolves 0.30.2) | tui |
+| `crossterm` | `0.29` | tui |
+| `ratatui-image` | `11`, `default-features = false`, features `["crossterm"]` | tui |
 | `directories` | `5` | tui |
 | `anyhow` | `1` | tui |
 
 > Keep `resvg`/`usvg` versions identical to each other. If `0.44` doesn't resolve, pick
 > the newest matching pair and keep both equal.
+>
+> **Version corrections applied (2026-06-23):**
+> - `crossterm` 0.28 → **0.29** — matches the crossterm that `ratatui` 0.30 uses; removes
+>   a duplicate crossterm in the build.
+> - `ratatui-image` `"2"` → **`"11"`** — the plan's original `"2"` capped resolution at
+>   `2.0.1`, which depends on **ratatui 0.28** and silently forced three ratatui versions
+>   (0.28/0.29/0.30) into the tree. `ratatui-image` 11.x depends on ratatui 0.30. Must use
+>   `default-features = false, features = ["crossterm"]`, otherwise it links the system C
+>   library **chafa** (`chafa.pc` not found → build failure). We feed raw `RgbaImage`, so
+>   chafa is unnecessary.
+> - **`tui-textarea` removed** — it was unused (the editor is hand-rolled) and it pulled in
+>   ratatui 0.29. Editing is done with custom `[String; 7]` fields + manual cursor logic.
 
 ---
 
 ## 1. Workspace layout (target end state)
 
 ```
-equivault/
+nullspace/
 ├─ Cargo.toml                  # [workspace] only
 ├─ PLAN.md
 ├─ crates/
-│  ├─ equivault-core/
+│  ├─ nullspace-core/
 │  │  ├─ Cargo.toml
 │  │  └─ src/
 │  │     ├─ lib.rs             # pub use of model, store, render, error
@@ -75,7 +123,7 @@ equivault/
 │  │        ├─ stub.rs         # placeholder renderer (Phase 2)
 │  │        ├─ ratex.rs        # real renderer (Phase 7, isolated)
 │  │        └─ unicode.rs      # latex -> unicode table
-│  └─ equivault-tui/
+│  └─ nullspace-tui/
 │     ├─ Cargo.toml
 │     └─ src/
 │        ├─ main.rs            # entry, CLI/db path, run()
@@ -105,13 +153,13 @@ equivault/
 ```toml
 [workspace]
 resolver = "2"
-members = ["crates/equivault-core", "crates/equivault-tui"]
+members = ["crates/nullspace-core", "crates/nullspace-tui"]
 ```
 
-`crates/equivault-core/Cargo.toml`:
+`crates/nullspace-core/Cargo.toml`:
 ```toml
 [package]
-name = "equivault-core"
+name = "nullspace-core"
 version = "0.1.0"
 edition = "2021"
 
@@ -126,7 +174,7 @@ image = "0.25"
 # render backend deps (resvg/usvg/tiny-skia/ratex-svg) are added in Phase 7.
 ```
 
-`crates/equivault-core/src/lib.rs`:
+`crates/nullspace-core/src/lib.rs`:
 ```rust
 pub mod error;
 pub mod model;
@@ -138,19 +186,19 @@ pub use model::{Equation, EquationId, EquationSummary, Reference, Variable};
 pub use store::Store;
 ```
 
-`crates/equivault-tui/Cargo.toml`:
+`crates/nullspace-tui/Cargo.toml`:
 ```toml
 [package]
-name = "equivault-tui"
+name = "nullspace-tui"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "equivault"
+name = "nullspace"
 path = "src/main.rs"
 
 [dependencies]
-equivault-core = { path = "../equivault-core" }
+nullspace-core = { path = "../nullspace-core" }
 ratatui = "0.30"
 crossterm = "0.28"
 ratatui-image = "2"
@@ -160,9 +208,9 @@ anyhow = "1"
 image = "0.25"
 ```
 
-`crates/equivault-tui/src/main.rs` (temporary):
+`crates/nullspace-tui/src/main.rs` (temporary):
 ```rust
-fn main() { println!("equivault skeleton"); }
+fn main() { println!("nullspace skeleton"); }
 ```
 
 Create empty-but-valid module files so `lib.rs` compiles:
@@ -175,7 +223,7 @@ Create empty-but-valid module files so `lib.rs` compiles:
 ```
 cargo build --workspace
 ```
-Must succeed. `cargo run -p equivault-tui` prints "equivault skeleton".
+Must succeed. `cargo run -p nullspace-tui` prints "nullspace skeleton".
 
 ---
 
@@ -386,9 +434,9 @@ Use `Store::open_in_memory()` in every test.
 
 ### DoD
 ```
-cargo test -p equivault-core
+cargo test -p nullspace-core
 ```
-All six tests pass. `cargo clippy -p equivault-core -- -D warnings` is clean.
+All six tests pass. `cargo clippy -p nullspace-core -- -D warnings` is clean.
 
 ---
 
@@ -450,7 +498,7 @@ Order matters: replace longer tokens before shorter ones.
 
 ### DoD
 ```
-cargo test -p equivault-core
+cargo test -p nullspace-core
 ```
 All Phase 1 + Phase 2 tests pass. Clippy clean.
 
@@ -462,7 +510,7 @@ All Phase 1 + Phase 2 tests pass. Clippy clean.
 `j`/`k`, render the selected equation's image in the right pane, quit with `q`. No
 create/edit/delete yet.
 
-> **Start with a "hello ratatui" spike.** Before wiring EquiVault, make `main.rs` open the
+> **Start with a "hello ratatui" spike.** Before wiring Nullspace, make `main.rs` open the
 > alt screen, draw a single `Paragraph`, and quit on `q`. Get that compiling against
 > `ratatui` 0.30 first (fix any API drift here, once). Then build the rest.
 
@@ -476,7 +524,7 @@ Provide:
 
 ### 5.2 `action.rs` (exact)
 ```rust
-use equivault_core::EquationId;
+use nullspace_core::EquationId;
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -571,7 +619,7 @@ restore terminal
 empty. Put this in `AppState::open`.
 
 ### DoD
-- `cargo run -p equivault-tui` launches, shows the browser with the 3 seeded equations.
+- `cargo run -p nullspace-tui` launches, shows the browser with the 3 seeded equations.
 - `j`/`k` move the highlight; the right pane updates.
 - On a Kitty/WezTerm terminal an image shows; elsewhere the warning banner shows.
 - `q` quits and the terminal is fully restored (no broken state, even after a forced
@@ -671,28 +719,56 @@ pub struct EditorState {
 
 ---
 
-## 8. Phase 6 — Polish (optional, after core flow works)
+## 8. Phase 6 — Wire image display in the terminal (do this NEXT)
 
-Pick from, in priority order:
-- **Search:** `/` opens a filter; `store.search(q)` over name/description/tags.
-- **Variable lookup:** `store.by_symbol(sym)` → list equations using a symbol.
-- **Related-equation picker:** a popup list with multi-select instead of typing names.
-- **Help overlay** (`?`): full keymap.
-- **JSON import/export:** `serde_json` over `Vec<Equation>` (`--export file.json`,
-  `--import file.json`).
-- **Config / `--db <path>`** flag and `EQUIVAULT_DB` env var.
+**Goal:** make the rendered `RgbaImage` actually appear in the right-hand pane as a real
+terminal image (Kitty/Sixel/iTerm2), with the unicode/half-block fallback elsewhere. This
+closes THE GAP and makes the flagship feature visibly work. **Do this with the existing
+stub renderer first** — proving pixels reach the terminal is independent of *what* drew
+them, and keeps this step verifiable before the RaTeX swap (Phase 7).
 
-Each is independently shippable; give each its own small DoD (a test or a manual check).
+Prerequisite (**already applied**): `ratatui-image = { version = "11",
+default-features = false, features = ["crossterm"] }`, `crossterm = "0.29"`,
+`tui-textarea` removed. `cargo build --workspace` is green.
+
+### Steps
+1. **Create `graphics.rs`** owning a `ratatui_image::picker::Picker`. Build it once at
+   startup (`Picker::from_query_stdio()`; fall back to `Picker::from_fontsize((8, 16))` if
+   the query fails). Store the `Picker` in `AppState` (replaces/augments the current
+   `graphics_ok` env-var heuristic — keep the heuristic only as the fallback flag). Note:
+   `from_query_stdio` must run **before** entering raw mode / alt screen, or right after,
+   per ratatui-image docs — verify ordering against `tui.rs`.
+2. **Hold a protocol, not just an image.** In `AppState`, alongside `preview: Option<RgbaImage>`,
+   keep `preview_protocol: Option<StatefulProtocol>`. When a new image arrives in
+   `tick_render`, build it via `picker.new_resize_protocol(image)`.
+3. **Draw it in `widgets.rs::preview_pane`.** Replace the `"Rendered image: W x H px"`
+   text branch with rendering the `StatefulImage` widget:
+   `frame.render_stateful_widget(StatefulImage::default(), image_area, &mut protocol)`.
+   Keep the unicode-approx line below the image as a caption. Keep the red error branch and
+   the "Rendering…" placeholder.
+4. **Resize handling:** `StatefulProtocol` re-renders on area change; just pass the current
+   pane `Rect`. No manual scaling needed.
+5. **Fallback:** when `graphics_ok` is false, ratatui-image already degrades to
+   half-blocks; still show the warning in the status bar.
+
+### DoD
+- On Kitty/WezTerm/Ghostty: selecting an equation shows an actual rendered image (the stub
+  bars are fine here — they prove the path). Navigating updates it; editing latex updates
+  it live (debounced).
+- On a non-graphics terminal: half-blocks or the unicode caption show, plus the warning.
+- No flicker/leftover-image artifacts when switching modes (call `Clear` on the image area
+  if needed). `cargo build --workspace` green.
 
 ---
 
 ## 9. Phase 7 — Swap in the real RaTeX renderer (isolated)
 
-**Do this only after Phases 0–5 work with the stub.** Everything else stays untouched;
-only `render/mod.rs`'s one call site changes.
+**Do this after Phase 6** (image display works with the stub). Everything else stays
+untouched; only `render/mod.rs`'s one call site changes — `preview_pane` already draws
+whatever image `render_image` returns.
 
 ### Steps
-1. `cargo add ratex-svg resvg@0.44 usvg@0.44 tiny-skia@0.11 -p equivault-core`.
+1. `cargo add ratex-svg resvg@0.44 usvg@0.44 tiny-skia@0.11 -p nullspace-core`.
    (If `ratex-svg`'s API/name differs, check https://github.com/erweixin/RaTeX and
    https://docs.rs/ratex-svg — it is `0.0.x`, so confirm the entry function.)
 2. Implement `render/ratex.rs::render(latex, px_height) -> Result<RgbaImage, String>`:
@@ -719,18 +795,33 @@ only `render/mod.rs`'s one call site changes.
 
 ---
 
+## 9b. Phase 8 — Polish (optional, after display + RaTeX work)
+
+Already done (don't re-do): **related-equation picker** with fuzzy search + multi-select,
+**notifications/status bar**, **autosave**. Remaining, in priority order:
+- **Search:** `/` opens a filter; `store.search(q)` over name/description/tags.
+- **Variable lookup:** `store.by_symbol(sym)` → list equations using a symbol.
+- **Help overlay** (`?`): full keymap.
+- **JSON import/export:** `serde_json` over `Vec<Equation>` (`--export`/`--import`).
+- **Config / `--db <path>`** flag and `NULLSPACE_DB` env var.
+
+Each is independently shippable; give each its own small DoD.
+
+---
+
 ## 10. Definition-of-Done summary (gates)
 
-| Phase | Command(s) that must pass |
-|---|---|
-| 0 | `cargo build --workspace` |
-| 1 | `cargo test -p equivault-core` (6 store tests) + clippy clean |
-| 2 | `cargo test -p equivault-core` (store + 4 render tests) |
-| 3 | `cargo run -p equivault-tui` → browser navigates, quits cleanly |
-| 4 | manual: renders coalesce at ~150ms, cache hits are instant |
-| 5 | manual: create/edit/delete persist; live preview + error handling work |
-| 6 | per chosen feature |
-| 7 | real equations render; `Err` path intact; tests green |
+| Phase | Status | Command(s) / check that must pass |
+|---|---|---|
+| 0 Skeleton | ✅ done | `cargo build --workspace` |
+| 1 Core store | ✅ done | `cargo test -p nullspace-core` (store tests) + clippy clean |
+| 2 Render stub + unicode | ✅ done | `cargo test -p nullspace-core` (store + render tests) |
+| 3 TUI browser | ✅ done | `cargo run -p nullspace-tui` → browser navigates, quits cleanly |
+| 4 Worker + debounce | ✅ done | renders coalesce at ~150ms, cache hits instant |
+| 5 Editor (= detail) + delete | ✅ done | create/edit/delete persist; autosave + error handling |
+| **6 Image display** | **TODO (next)** | actual image shows in right pane on Kitty/WezTerm |
+| 7 RaTeX swap | TODO | real equations render; `Err` path intact; tests green |
+| 8 Polish | partial | per chosen feature |
 
 ---
 
@@ -739,9 +830,10 @@ only `render/mod.rs`'s one call site changes.
 - **RaTeX is `0.0.x` and unverified** → quarantined to Phase 7 behind a fixed
   `render_image` signature; app is fully functional on the stub first; Tectonic is a
   drop-in fallback touching only `render/ratex.rs`.
-- **ratatui 0.30 / ratatui-image 2.x / tui-textarea API drift** → each TUI phase starts
-  with the smallest compiling milestone; fix call sites against docs without changing the
-  signatures this plan defines.
+- **TUI crate version skew** → resolved: `ratatui-image` 11 + `crossterm` 0.29 align with
+  `ratatui` 0.30.2 (single ratatui in the tree); `tui-textarea` removed. Pin transitive
+  graphics features off (`default-features = false`) to avoid the system `chafa` dep.
+  When bumping any TUI crate, re-run `cargo tree | grep ratatui` and require one version.
 - **Terminal without graphics** → detection + half-block fallback + warning banner
   (Phase 3); never a hard failure.
 - **Render latency / UI jank** → worker thread + 150ms debounce + generation-drop + LRU
@@ -749,6 +841,6 @@ only `render/mod.rs`'s one call site changes.
 - **`h`/`l` text-vs-navigation ambiguity** → resolved by the mode-aware keymap (Phase 3);
   literal text inside the editor.
 - **Panic leaving a broken terminal** → panic hook restores the terminal (Phase 3 DoD).
-- **Over-abstraction** → no speculative GUI "port" traits; `equivault-core`'s public API
+- **Over-abstraction** → no speculative GUI "port" traits; `nullspace-core`'s public API
   *is* the boundary, enforced by the no-`ratatui`-in-core dependency rule.
 ```

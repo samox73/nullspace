@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use equivault_core::{
+use nullspace_core::{
     render::render_image, Equation, EquationId, EquationSummary, Reference, Store, Variable,
 };
 use image::RgbaImage;
@@ -690,7 +690,7 @@ impl AppState {
             .collect();
         equation.variables = parse_variables(&editor.fields[5]);
         equation.related = parse_related(&editor.fields[6], &self.items);
-        equation.updated_at = equivault_core::store::now_rfc3339();
+        equation.updated_at = nullspace_core::store::now_rfc3339();
         let saved_id = equation.id;
         if editor.editing.is_some() {
             self.store.update(&equation)?;

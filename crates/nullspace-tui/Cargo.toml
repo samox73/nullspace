@@ -1,0 +1,17 @@
+[package]
+name = "nullspace-tui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "nullspace"
+path = "src/main.rs"
+
+[dependencies]
+nullspace-core = { path = "../nullspace-core" }
+ratatui = "0.30"
+crossterm = "0.29"
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
+directories = "5"
+anyhow = "1"
+image = "0.25"

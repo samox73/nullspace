@@ -1,4 +1,4 @@
-use equivault_core::render::to_unicode_approx;
+use nullspace_core::render::to_unicode_approx;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},

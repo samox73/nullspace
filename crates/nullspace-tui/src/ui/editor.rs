@@ -203,7 +203,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 fn draw_remove_related_confirm(
     frame: &mut Frame<'_>,
     app: &AppState,
-    id: equivault_core::EquationId,
+    id: nullspace_core::EquationId,
 ) {
     let name = app
         .items

@@ -45,12 +45,12 @@ fn run(
 }
 
 fn db_path() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = std::env::var("EQUIVAULT_DB") {
+    if let Ok(path) = std::env::var("NULLSPACE_DB") {
         return Ok(PathBuf::from(path));
     }
-    let project_dirs = directories::ProjectDirs::from("dev", "equivault", "EquiVault")
+    let project_dirs = directories::ProjectDirs::from("dev", "nullspace", "Nullspace")
         .context("could not determine data directory")?;
     let dir = project_dirs.data_dir();
     std::fs::create_dir_all(dir)?;
-    Ok(dir.join("equivault.sqlite3"))
+    Ok(dir.join("nullspace.sqlite3"))
 }
