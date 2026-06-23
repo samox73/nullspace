@@ -1,6 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Margin, Rect},
-    prelude::Position,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
@@ -30,6 +29,11 @@ const PLACEHOLDERS: [&str; 7] = [
     "Mass energy equivalence, Euler identity",
 ];
 
+const MIN_TEXT_BOX_LINES: u16 = 1;
+const MAX_TEXT_BOX_LINES: u16 = 10;
+const BLOCK_CHROME_ROWS: u16 = 2;
+const MULTILINE_FIELDS: [usize; 4] = [1, 2, 3, 5];
+
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -40,20 +44,23 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(outer[0]);
 
+    let row_constraints = app
+        .editor
+        .as_ref()
+        .map(|editor| editor_row_constraints(editor, panes[0].width))
+        .unwrap_or_else(default_row_constraints);
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Length(3),
-            Constraint::Length(5),
-            Constraint::Min(3),
-        ])
+        .constraints(row_constraints)
         .split(panes[0]);
 
-    if let Some(editor) = &app.editor {
+    let current_latex = app.editor.as_ref().map(|editor| editor.field_text(2));
+    let latex_invalid = current_latex
+        .as_deref()
+        .is_some_and(|latex| app.preview_error.is_some() && app.preview_latex == latex);
+    let cursor_visible = app.cursor_visible();
+
+    if let Some(editor) = &mut app.editor {
         for (index, area) in rows.iter().enumerate() {
             let style = if editor.focus == index {
                 Style::default()
@@ -70,47 +77,33 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             let block = Block::default()
                 .title(title)
                 .borders(Borders::ALL)
-                .border_style(style);
+                .border_style(if index == 2 && latex_invalid {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                } else {
+                    style
+                });
             if index == 6 {
                 render_related_field(
                     frame,
                     *area,
                     block,
-                    &editor.fields[index],
+                    &editor.field_text(index),
                     editor.related_cursor,
                 );
                 continue;
             }
-            let content = if editor.fields[index].is_empty() && !PLACEHOLDERS[index].is_empty() {
-                PLACEHOLDERS[index].to_string()
+            editor.fields[index].set_block(block);
+            editor.fields[index].set_cursor_line_style(Style::default());
+            editor.fields[index].set_cursor_style(if index == editor.focus && cursor_visible {
+                Style::default().add_modifier(Modifier::REVERSED)
             } else {
-                editor.fields[index].clone()
-            };
-            frame.render_widget(
-                Paragraph::new(content)
-                    .style(if editor.fields[index].is_empty() {
-                        Style::default().fg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    })
-                    .block(block)
-                    .wrap(Wrap { trim: false }),
-                *area,
-            );
-        }
-        if editor.focus != 6 {
-            let focused = rows[editor.focus].inner(Margin {
-                vertical: 1,
-                horizontal: 1,
+                Style::default()
             });
-            let (line, column) =
-                cursor_line_column(&editor.fields[editor.focus], editor.cursors[editor.focus]);
-            if focused.width > 0 && focused.height > 0 {
-                frame.set_cursor_position(Position::new(
-                    focused.x + (column as u16).min(focused.width.saturating_sub(1)),
-                    focused.y + (line as u16).min(focused.height.saturating_sub(1)),
-                ));
+            if !PLACEHOLDERS[index].is_empty() {
+                editor.fields[index].set_placeholder_text(PLACEHOLDERS[index]);
+                editor.fields[index].set_placeholder_style(Style::default().fg(Color::DarkGray));
             }
+            frame.render_widget(&editor.fields[index], *area);
         }
     }
     widgets::preview_pane(frame, panes[1], app, "Live preview");
@@ -121,6 +114,39 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         draw_remove_related_confirm(frame, app, id);
     }
     widgets::status_bar(frame, outer[1], app);
+}
+
+fn default_row_constraints() -> Vec<Constraint> {
+    vec![
+        Constraint::Length(3),
+        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+        Constraint::Length(3),
+        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+        Constraint::Min(3),
+    ]
+}
+
+fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<Constraint> {
+    (0..7)
+        .map(|index| match index {
+            0 | 4 => Constraint::Length(3),
+            6 => Constraint::Min(3),
+            _ if MULTILINE_FIELDS.contains(&index) => {
+                Constraint::Length(text_box_height(editor, index, width))
+            }
+            _ => Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+        })
+        .collect()
+}
+
+fn text_box_height(editor: &crate::app::EditorState, index: usize, width: u16) -> u16 {
+    let mut textarea = editor.fields[index].clone();
+    textarea.set_block(Block::default().borders(Borders::ALL));
+    textarea.set_min_rows(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS);
+    textarea.set_max_rows(MAX_TEXT_BOX_LINES + BLOCK_CHROME_ROWS);
+    textarea.measure(width).preferred_rows
 }
 
 fn draw_related_picker(frame: &mut Frame<'_>, app: &AppState) {
@@ -219,17 +245,6 @@ fn draw_remove_related_confirm(
             .wrap(Wrap { trim: false }),
         area,
     );
-}
-
-fn cursor_line_column(value: &str, cursor: usize) -> (usize, usize) {
-    let before = &value[..cursor.min(value.len())];
-    let line = before.bytes().filter(|byte| *byte == b'\n').count();
-    let column = before
-        .rsplit('\n')
-        .next()
-        .map(|segment| segment.chars().count())
-        .unwrap_or(0);
-    (line, column)
 }
 
 fn render_related_field(

@@ -17,6 +17,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             KeyCode::Char('h') => Action::FocusLeft,
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Char('n') => Action::NewEquation,
+            KeyCode::Char('c') => Action::CopyCurrent,
             KeyCode::Char('d') => Action::DeleteRequest,
             KeyCode::Char('+') | KeyCode::Char('=') => Action::PreviewZoomIn,
             KeyCode::Char('-') => Action::PreviewZoomOut,

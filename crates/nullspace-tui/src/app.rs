@@ -8,6 +8,7 @@ use nullspace_core::{
 };
 use ratatui::layout::Size;
 use ratatui_image::protocol::StatefulProtocol;
+use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::action::Action;
 use crate::graphics::Graphics;
@@ -39,14 +40,27 @@ pub enum Pane {
 #[derive(Clone)]
 pub struct EditorState {
     pub editing: Option<EquationId>,
-    pub fields: [String; 7],
-    pub cursors: [usize; 7],
+    pub fields: [TextArea<'static>; 7],
     pub focus: usize,
     pub related_cursor: usize,
     pub dirty: bool,
     pub last_change: Instant,
     pub last_saved_signature: String,
     pub related_picker: RelatedPickerState,
+}
+
+impl EditorState {
+    pub fn field_text(&self, index: usize) -> String {
+        textarea_text(&self.fields[index])
+    }
+
+    fn field_texts(&self) -> [String; 7] {
+        std::array::from_fn(|index| self.field_text(index))
+    }
+
+    fn set_field_text(&mut self, index: usize, text: String) {
+        set_textarea_text(&mut self.fields[index], text);
+    }
 }
 
 #[derive(Clone)]
@@ -141,7 +155,7 @@ impl AppState {
             preview_protocol: None,
             preview_error: None,
             preview_latex: String::new(),
-            preview_px: 48,
+            preview_px: 160,
             preview_preserve_on_error: false,
             notification: None,
             editor_history: Vec::new(),
@@ -231,6 +245,10 @@ impl AppState {
         const FRAMES: [&str; 4] = ["-", "\\", "|", "/"];
         let index = ((self.last_change.elapsed().as_millis() / 120) as usize) % FRAMES.len();
         FRAMES[index]
+    }
+
+    pub fn cursor_visible(&self) -> bool {
+        (self.last_change.elapsed().as_millis() / 200) % 2 == 0
     }
 
     fn refresh_items(&mut self) -> anyhow::Result<()> {
@@ -341,6 +359,7 @@ impl AppState {
                 self.open_editor(None);
                 Ok(())
             }
+            Action::CopyCurrent => self.copy_current_equation(),
             Action::DeleteRequest => {
                 if let Some(id) = self.selected_id() {
                     self.mode = Mode::ConfirmDelete(id);
@@ -459,29 +478,33 @@ impl AppState {
             }
             Action::EditorMoveLeft => {
                 if let Some(editor) = &mut self.editor {
-                    let field = editor.focus;
-                    editor.cursors[field] =
-                        prev_boundary(&editor.fields[field], editor.cursors[field]);
+                    if editor.focus != 6 {
+                        editor.fields[editor.focus].move_cursor(CursorMove::Back);
+                    }
                 }
                 Ok(())
             }
             Action::EditorMoveRight => {
                 if let Some(editor) = &mut self.editor {
-                    let field = editor.focus;
-                    editor.cursors[field] =
-                        next_boundary(&editor.fields[field], editor.cursors[field]);
+                    if editor.focus != 6 {
+                        editor.fields[editor.focus].move_cursor(CursorMove::Forward);
+                    }
                 }
                 Ok(())
             }
             Action::EditorHome => {
                 if let Some(editor) = &mut self.editor {
-                    editor.cursors[editor.focus] = 0;
+                    if editor.focus != 6 {
+                        editor.fields[editor.focus].move_cursor(CursorMove::Head);
+                    }
                 }
                 Ok(())
             }
             Action::EditorEnd => {
                 if let Some(editor) = &mut self.editor {
-                    editor.cursors[editor.focus] = editor.fields[editor.focus].len();
+                    if editor.focus != 6 {
+                        editor.fields[editor.focus].move_cursor(CursorMove::End);
+                    }
                 }
                 Ok(())
             }
@@ -489,6 +512,8 @@ impl AppState {
                 if let Some(editor) = &mut self.editor {
                     if editor.focus == 6 {
                         editor.related_cursor = editor.related_cursor.saturating_sub(1);
+                    } else {
+                        editor.fields[editor.focus].move_cursor(CursorMove::Up);
                     }
                 }
                 Ok(())
@@ -498,7 +523,7 @@ impl AppState {
                     .editor
                     .as_ref()
                     .map(|editor| {
-                        parse_related(&editor.fields[6], &self.all_items)
+                        parse_related(&editor.field_text(6), &self.all_items)
                             .len()
                             .saturating_sub(1)
                     })
@@ -506,6 +531,8 @@ impl AppState {
                 if let Some(editor) = &mut self.editor {
                     if editor.focus == 6 {
                         editor.related_cursor = (editor.related_cursor + 1).min(max);
+                    } else {
+                        editor.fields[editor.focus].move_cursor(CursorMove::Down);
                     }
                 }
                 Ok(())
@@ -673,7 +700,7 @@ impl AppState {
         let latex = if in_editor {
             self.editor
                 .as_ref()
-                .map(|editor| editor.fields[2].clone())
+                .map(|editor| editor.field_text(2))
                 .unwrap_or_default()
         } else {
             self.items
@@ -817,7 +844,7 @@ impl AppState {
 
     fn open_editor(&mut self, id: Option<EquationId>) {
         let equation = id.and_then(|eq_id| self.store.get(eq_id).ok());
-        let fields = if let Some(eq) = equation {
+        let field_values = if let Some(eq) = equation {
             [
                 eq.name,
                 eq.description,
@@ -838,10 +865,12 @@ impl AppState {
                 String::new(),
             ]
         };
+        let fields = field_values
+            .each_ref()
+            .map(|value| textarea_from_text(value));
         self.editor = Some(EditorState {
             editing: id,
-            cursors: fields.each_ref().map(String::len),
-            last_saved_signature: fields_signature(&fields),
+            last_saved_signature: fields_signature(&field_values),
             fields,
             focus: 0,
             related_cursor: 0,
@@ -863,8 +892,6 @@ impl AppState {
             return;
         };
         let focused = editor.focus;
-        let field = &mut editor.fields[focused];
-        let cursor = editor.cursors[focused].min(field.len());
         match key.code {
             KeyCode::Char('r') if focused == 6 => {
                 self.open_related_picker();
@@ -875,7 +902,7 @@ impl AppState {
                 return;
             }
             KeyCode::Char('j') if focused == 6 => {
-                let max = parse_related(field, &self.all_items)
+                let max = parse_related(&editor.field_text(6), &self.all_items)
                     .len()
                     .saturating_sub(1);
                 editor.related_cursor = (editor.related_cursor + 1).min(max);
@@ -887,35 +914,13 @@ impl AppState {
                 }
                 return;
             }
-            KeyCode::Char(ch) => {
-                if focused != 6 {
-                    field.insert(cursor, ch);
-                    editor.cursors[focused] = cursor + ch.len_utf8();
-                }
-            }
-            KeyCode::Backspace => {
-                if cursor > 0 {
-                    let previous = prev_boundary(field, cursor);
-                    field.drain(previous..cursor);
-                    editor.cursors[focused] = previous;
-                }
-            }
-            KeyCode::Delete => {
-                if cursor < field.len() {
-                    let next = next_boundary(field, cursor);
-                    field.drain(cursor..next);
-                    editor.cursors[focused] = cursor;
-                }
-            }
-            KeyCode::Enter if matches!(focused, 1 | 2 | 3 | 5) => {
-                field.insert(cursor, '\n');
-                editor.cursors[focused] = cursor + 1;
-            }
+            KeyCode::Enter if matches!(focused, 0 | 4) => return,
             KeyCode::Enter if focused == 6 => {
                 self.open_selected_related_detail();
                 return;
             }
-            _ => {}
+            _ if focused != 6 && editor.fields[focused].input(key) => {}
+            _ => return,
         }
         mark_editor_dirty(editor);
         if editor.focus == 2 {
@@ -940,7 +945,7 @@ impl AppState {
         if editor.focus != 6 {
             return;
         }
-        editor.related_picker.selected = parse_related(&editor.fields[6], &self.all_items);
+        editor.related_picker.selected = parse_related(&editor.field_text(6), &self.all_items);
         editor.related_picker.query.clear();
         let items = related_picker_items_for(&self.all_items, editor.editing);
         if editor.related_picker.cursor >= items.len() {
@@ -1003,8 +1008,10 @@ impl AppState {
         let Some(editor) = &mut self.editor else {
             return;
         };
-        editor.fields[6] = format_related(&editor.related_picker.selected, &self.all_items);
-        editor.cursors[6] = editor.fields[6].len();
+        editor.set_field_text(
+            6,
+            format_related(&editor.related_picker.selected, &self.all_items),
+        );
         editor.related_cursor = editor
             .related_cursor
             .min(editor.related_picker.selected.len().saturating_sub(1));
@@ -1019,7 +1026,7 @@ impl AppState {
         if editor.focus != 6 {
             return;
         }
-        let related = parse_related(&editor.fields[6], &self.all_items);
+        let related = parse_related(&editor.field_text(6), &self.all_items);
         let Some(id) = related.get(editor.related_cursor).copied() else {
             self.open_related_picker();
             return;
@@ -1035,7 +1042,7 @@ impl AppState {
         if editor.focus != 6 {
             return None;
         }
-        parse_related(&editor.fields[6], &self.all_items)
+        parse_related(&editor.field_text(6), &self.all_items)
             .get(editor.related_cursor)
             .copied()
     }
@@ -1044,10 +1051,9 @@ impl AppState {
         let Some(editor) = &mut self.editor else {
             return;
         };
-        let mut related = parse_related(&editor.fields[6], &self.all_items);
+        let mut related = parse_related(&editor.field_text(6), &self.all_items);
         related.retain(|related_id| *related_id != id);
-        editor.fields[6] = format_related(&related, &self.all_items);
-        editor.cursors[6] = editor.fields[6].len();
+        editor.set_field_text(6, format_related(&related, &self.all_items));
         editor.related_cursor = editor.related_cursor.min(related.len().saturating_sub(1));
         mark_editor_dirty(editor);
     }
@@ -1056,47 +1062,80 @@ impl AppState {
         self.persist_editor(false)
     }
 
+    fn copy_current_equation(&mut self) -> anyhow::Result<()> {
+        let Some(source_id) = self.selected_id() else {
+            return Ok(());
+        };
+        let source = self.store.get(source_id)?;
+        let mut clone = Equation::new(
+            format!("[clone] {}", source.name),
+            format!("[clone] {}", source.latex),
+        );
+        clone.description = source.description;
+        clone.references = source.references;
+        clone.tags = source.tags;
+        clone.variables = source.variables;
+        clone.related = source.related;
+        clone.px_height = source.px_height;
+        let clone_id = clone.id;
+
+        self.store.insert(&clone)?;
+        self.reload()?;
+        if let Some(index) = self.items.iter().position(|item| item.id == clone_id) {
+            self.cursor = index;
+        }
+        self.selected = self.store.get(clone_id).ok();
+        self.mode = Mode::Browser;
+        self.status = "Equation copied".to_string();
+        self.notification = Some(Notification {
+            message: "equation copied".to_string(),
+            created_at: Instant::now(),
+        });
+        self.schedule_selected();
+        Ok(())
+    }
+
     fn persist_editor(&mut self, exit_after_save: bool) -> anyhow::Result<()> {
         let Some(editor) = &self.editor else {
             return Ok(());
         };
-        if editor.fields[0].trim().is_empty() {
+        let fields = editor.field_texts();
+        let editing = editor.editing;
+        let last_saved_signature = editor.last_saved_signature.clone();
+        if fields[0].trim().is_empty() {
             return Ok(());
         }
-        if editor.fields[2].trim().is_empty() {
+        if fields[2].trim().is_empty() {
             return Ok(());
         }
-        let signature = fields_signature(&editor.fields);
-        if signature == editor.last_saved_signature {
+        let signature = fields_signature(&fields);
+        if signature == last_saved_signature {
             if let Some(editor) = &mut self.editor {
                 editor.dirty = false;
             }
             return Ok(());
         }
-        render_image(&editor.fields[2], 48).map_err(anyhow::Error::msg)?;
-        let mut equation = if let Some(id) = editor.editing {
+        render_image(&fields[2], 48).map_err(anyhow::Error::msg)?;
+        let mut equation = if let Some(id) = editing {
             self.store.get(id)?
         } else {
-            Equation::new(
-                editor.fields[0].trim().to_string(),
-                editor.fields[2].trim().to_string(),
-            )
+            Equation::new(fields[0].trim().to_string(), fields[2].trim().to_string())
         };
-        equation.name = editor.fields[0].trim().to_string();
-        equation.description = editor.fields[1].trim().to_string();
-        equation.latex = editor.fields[2].trim().to_string();
-        equation.references = parse_refs(&editor.fields[3]);
-        equation.tags = editor.fields[4]
+        equation.name = fields[0].trim().to_string();
+        equation.description = fields[1].trim().to_string();
+        equation.latex = fields[2].trim().to_string();
+        equation.references = parse_refs(&fields[3]);
+        equation.tags = fields[4]
             .split(',')
             .map(str::trim)
             .filter(|tag| !tag.is_empty())
             .map(ToOwned::to_owned)
             .collect();
-        equation.variables = parse_variables(&editor.fields[5]);
-        equation.related = parse_related(&editor.fields[6], &self.all_items);
+        equation.variables = parse_variables(&fields[5]);
+        equation.related = parse_related(&fields[6], &self.all_items);
         equation.updated_at = nullspace_core::store::now_rfc3339();
         let saved_id = equation.id;
-        let save_result = if editor.editing.is_some() {
+        let save_result = if editing.is_some() {
             self.store.update(&equation)
         } else {
             self.store.insert(&equation)
@@ -1209,6 +1248,56 @@ fn seed(store: &mut Store) -> anyhow::Result<()> {
         store.insert(&eq)?;
     }
     Ok(())
+}
+
+fn textarea_from_text(text: &str) -> TextArea<'static> {
+    let lines = textarea_lines(text);
+    let cursor = textarea_end_cursor(&lines);
+    let mut textarea = TextArea::new(lines.clone());
+    textarea.set_lines(lines, cursor);
+    textarea.set_wrap_mode(WrapMode::WordOrGlyph);
+    textarea
+}
+
+fn set_textarea_text(textarea: &mut TextArea<'static>, text: String) {
+    let lines = textarea_lines(&text);
+    let cursor = textarea_end_cursor(&lines);
+    textarea.set_lines(lines, cursor);
+}
+
+fn textarea_lines(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        vec![String::new()]
+    } else {
+        text.split('\n').map(ToOwned::to_owned).collect()
+    }
+}
+
+fn textarea_end_cursor(lines: &[String]) -> (usize, usize) {
+    let row = lines.len().saturating_sub(1);
+    let column = lines.last().map(|line| line.chars().count()).unwrap_or(0);
+    (row, column)
+}
+
+fn textarea_text(textarea: &TextArea<'_>) -> String {
+    textarea.lines().join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{textarea_from_text, textarea_lines, textarea_text};
+
+    #[test]
+    fn textarea_round_trips_multiline_text() {
+        let text = "a\nb\nc";
+        let textarea = textarea_from_text(text);
+        assert_eq!(textarea_text(&textarea), text);
+    }
+
+    #[test]
+    fn textarea_lines_preserve_trailing_empty_line() {
+        assert_eq!(textarea_lines("a\n"), ["a".to_string(), String::new()]);
+    }
 }
 
 fn format_refs(references: &[Reference]) -> String {

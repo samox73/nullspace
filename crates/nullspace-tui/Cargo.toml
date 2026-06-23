@@ -12,6 +12,7 @@ nullspace-core = { path = "../nullspace-core" }
 ratatui = "0.30"
 crossterm = "0.29"
 ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
+tui-textarea = { package = "tui-textarea-2", version = "0.11", features = ["crossterm"] }
 directories = "5"
 anyhow = "1"
 image = "0.25"

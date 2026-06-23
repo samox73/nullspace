@@ -6,6 +6,7 @@ pub enum Action {
     FocusLeft,
     FocusRight,
     NewEquation,
+    CopyCurrent,
     DeleteRequest,
     ConfirmYes,
     ConfirmNo,

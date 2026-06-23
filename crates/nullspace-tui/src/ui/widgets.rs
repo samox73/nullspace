@@ -114,7 +114,7 @@ fn centered_image_area(protocol: &ratatui_image::protocol::StatefulProtocol, are
 pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let help = match app.mode {
         Mode::Browser => {
-            "j/k move  / search  v symbol  enter edit  +/- zoom  n new  d delete  q quit"
+            "j/k move  / search  v symbol  enter edit  +/- zoom  n new  c copy  d delete  q quit"
         }
         Mode::Search => "type search  enter apply  esc clear",
         Mode::VariableLookup => "type symbol  enter apply  esc clear",
