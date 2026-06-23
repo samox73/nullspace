@@ -48,6 +48,7 @@ pub struct Equation {
     pub tags: Vec<String>,
     pub variables: Vec<Variable>,
     pub related: Vec<EquationId>,
+    pub px_height: u32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -58,6 +59,7 @@ pub struct EquationSummary {
     pub name: String,
     pub description: String,
     pub latex: String,
+    pub px_height: u32,
 }
 
 impl Equation {
@@ -72,6 +74,7 @@ impl Equation {
             tags: Vec::new(),
             variables: Vec::new(),
             related: Vec::new(),
+            px_height: 48,
             created_at: now.clone(),
             updated_at: now,
         }

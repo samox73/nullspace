@@ -29,12 +29,15 @@ impl Graphics {
         }
     }
 
-    pub fn protocol_for(&self, image: RgbaImage) -> StatefulProtocol {
-        let image = if let Some(palette) = self.palette {
+    pub fn recolor(&self, image: RgbaImage) -> RgbaImage {
+        if let Some(palette) = self.palette {
             recolor_image(image, palette)
         } else {
             image
-        };
+        }
+    }
+
+    pub fn protocol_from(&self, image: RgbaImage) -> StatefulProtocol {
         self.picker
             .new_resize_protocol(DynamicImage::ImageRgba8(image))
     }

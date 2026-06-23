@@ -1,5 +1,4 @@
-use std::collections::{HashMap, VecDeque};
-use std::hash::{Hash, Hasher};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -7,11 +6,18 @@ use image::RgbaImage;
 use nullspace_core::{
     render::render_image, Equation, EquationId, EquationSummary, Reference, Store, Variable,
 };
+use ratatui::layout::Size;
 use ratatui_image::protocol::StatefulProtocol;
 
 use crate::action::Action;
 use crate::graphics::Graphics;
+use crate::protocol_warm_worker::{ProtocolWarmJob, ProtocolWarmOutcome, ProtocolWarmWorker};
+use crate::render_cache;
 use crate::render_worker::{RenderJob, RenderWorker};
+use crate::warm_worker::{WarmJob, WarmOutcome, WarmWorker};
+
+const PROTOCOL_CACHE_CAPACITY: usize = 16;
+const WARM_RADIUS: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -74,14 +80,24 @@ pub struct AppState {
     pub preview_protocol: Option<StatefulProtocol>,
     pub preview_error: Option<String>,
     pub preview_latex: String,
+    pub preview_px: u32,
+    pub preview_preserve_on_error: bool,
     pub notification: Option<Notification>,
     editor_history: Vec<EditorState>,
     worker: RenderWorker,
+    warm_worker: WarmWorker,
+    protocol_warm_worker: ProtocolWarmWorker,
     generation: u64,
     dispatched_generation: u64,
     last_change: Instant,
     cache: HashMap<u64, RgbaImage>,
     cache_order: VecDeque<u64>,
+    warm_failed: HashSet<u64>,
+    protocol_warm_inflight: HashSet<u64>,
+    protocol_cache: HashMap<u64, StatefulProtocol>,
+    protocol_cache_order: VecDeque<u64>,
+    preview_cache_key: u64,
+    preview_warm_size: Option<Size>,
     graphics: Graphics,
 }
 
@@ -114,14 +130,24 @@ impl AppState {
             preview_protocol: None,
             preview_error: None,
             preview_latex: String::new(),
+            preview_px: 48,
+            preview_preserve_on_error: false,
             notification: None,
             editor_history: Vec::new(),
             worker: RenderWorker::spawn(),
+            warm_worker: WarmWorker::spawn(),
+            protocol_warm_worker: ProtocolWarmWorker::spawn(),
             generation: 0,
             dispatched_generation: 0,
             last_change: Instant::now(),
             cache: HashMap::new(),
             cache_order: VecDeque::new(),
+            warm_failed: HashSet::new(),
+            protocol_warm_inflight: HashSet::new(),
+            protocol_cache: HashMap::new(),
+            protocol_cache_order: VecDeque::new(),
+            preview_cache_key: 0,
+            preview_warm_size: None,
             graphics,
         };
         app.reload()?;
@@ -154,6 +180,19 @@ impl AppState {
             BrowserFilter::None => "Equations".to_string(),
             BrowserFilter::Search(query) => format!("Search: {}", query),
             BrowserFilter::Variable(symbol) => format!("Variable: {}", symbol),
+        }
+    }
+
+    pub fn set_preview_warm_size(&mut self, size: Size) {
+        if size.width == 0 || size.height == 0 || self.preview_warm_size == Some(size) {
+            return;
+        }
+        self.preview_warm_size = Some(size);
+        if matches!(
+            self.mode,
+            Mode::Browser | Mode::Search | Mode::VariableLookup
+        ) {
+            self.schedule_warm_neighbors();
         }
     }
 
@@ -304,6 +343,14 @@ impl AppState {
                 }
                 Ok(())
             }
+            Action::PreviewZoomIn => {
+                self.adjust_zoom(true)?;
+                Ok(())
+            }
+            Action::PreviewZoomOut => {
+                self.adjust_zoom(false)?;
+                Ok(())
+            }
             Action::Back => {
                 self.mode = match self.mode {
                     Mode::ConfirmDelete(_) => Mode::Browser,
@@ -326,13 +373,6 @@ impl AppState {
                     Mode::Search | Mode::VariableLookup | Mode::Browser => Mode::Browser,
                 };
                 self.schedule_selected();
-                Ok(())
-            }
-            Action::EditCurrent => {
-                if let Some(id) = self.selected_id() {
-                    self.editor_history.clear();
-                    self.open_editor(Some(id));
-                }
                 Ok(())
             }
             Action::EditorNextField => {
@@ -453,19 +493,79 @@ impl AppState {
             self.notification = None;
         }
 
-        while let Some(result) = self.worker.try_recv() {
-            if result.generation < self.generation {
-                continue;
+        while let Some(result) = self.protocol_warm_worker.try_recv() {
+            self.protocol_warm_inflight.remove(&result.key);
+            match result.outcome {
+                ProtocolWarmOutcome::Ready(protocol) => {
+                    if result.key != self.preview_cache_key || self.preview_protocol.is_none() {
+                        self.remember_protocol(result.key, protocol);
+                    }
+                }
+                ProtocolWarmOutcome::Failed => {}
             }
+        }
+
+        while let Some(result) = self.warm_worker.try_recv() {
+            let key = render_cache::key(&result.latex, result.px);
+            match result.outcome {
+                WarmOutcome::Ready(Ok(raw)) => {
+                    let display = self.graphics.recolor(raw);
+                    self.remember_cache(key, display.clone());
+                    self.queue_protocol_warm(key, display.clone());
+                    if key == self.preview_cache_key && self.preview_protocol.is_none() {
+                        let protocol = self
+                            .take_protocol(key)
+                            .unwrap_or_else(|| self.graphics.protocol_from(display.clone()));
+                        self.preview_protocol = Some(protocol);
+                        self.preview = Some(display);
+                        self.preview_error = None;
+                        self.dispatched_generation = self.generation;
+                    }
+                }
+                WarmOutcome::Ready(Err(_)) => {
+                    self.warm_failed.insert(key);
+                }
+                WarmOutcome::Skipped => {}
+            }
+        }
+
+        while let Some(result) = self.worker.try_recv() {
+            let key = render_cache::key(&result.latex, result.px);
+            let is_current_generation = result.generation >= self.generation;
+            let is_current_preview = key == self.preview_cache_key;
             match result.image {
-                Ok(image) => {
+                Ok(raw) => {
+                    let display = self.graphics.recolor(raw);
+                    self.remember_cache(key, display.clone());
+                    if !is_current_generation && !is_current_preview {
+                        continue;
+                    }
+
                     self.preview_error = None;
-                    self.remember_cache(hash_latex(&result.latex), image.clone());
-                    self.preview_protocol = Some(self.graphics.protocol_for(image.clone()));
-                    self.preview = Some(image);
+                    // Stash whatever was being shown while this rendered (may be a
+                    // different equation that stayed visible during the debounce window).
+                    if let Some(old_proto) = self.preview_protocol.take() {
+                        self.remember_protocol(self.preview_cache_key, old_proto);
+                    }
+                    self.preview_cache_key = key;
+                    let protocol = self
+                        .take_protocol(key)
+                        .unwrap_or_else(|| self.graphics.protocol_from(display.clone()));
+                    self.preview_protocol = Some(protocol);
+                    self.preview = Some(display);
+                    self.dispatched_generation = self.generation;
                 }
                 Err(err) => {
+                    if !is_current_generation && !is_current_preview {
+                        continue;
+                    }
+
                     self.preview_error = Some(err);
+                    if !self.preview_preserve_on_error {
+                        self.preview = None;
+                        self.preview_protocol = None;
+                    }
+                    self.dispatched_generation = self.generation;
                 }
             }
         }
@@ -476,7 +576,7 @@ impl AppState {
             self.worker.send(RenderJob {
                 generation: self.generation,
                 latex: self.preview_latex.clone(),
-                px: 48,
+                px: self.preview_px,
             });
             self.dispatched_generation = self.generation;
         }
@@ -493,10 +593,11 @@ impl AppState {
     }
 
     fn schedule_selected(&mut self) {
-        let latex = if matches!(
+        let in_editor = matches!(
             self.mode,
             Mode::Editor | Mode::RelatedPicker | Mode::ConfirmRemoveRelated(_)
-        ) {
+        );
+        let latex = if in_editor {
             self.editor
                 .as_ref()
                 .map(|editor| editor.fields[2].clone())
@@ -507,22 +608,134 @@ impl AppState {
                 .map(|item| item.latex.clone())
                 .unwrap_or_default()
         };
-        self.schedule_latex(latex);
+        let px = if in_editor {
+            self.selected.as_ref().map(|eq| eq.px_height).unwrap_or(48)
+        } else {
+            self.items
+                .get(self.cursor)
+                .map(|item| item.px_height)
+                .unwrap_or(48)
+        };
+        self.schedule_latex(latex, px);
+        if !in_editor {
+            self.schedule_warm_neighbors();
+        }
     }
 
-    fn schedule_latex(&mut self, latex: String) {
+    fn schedule_latex(&mut self, latex: String, px: u32) {
         self.preview_latex = latex;
+        self.preview_px = px;
+        self.preview_preserve_on_error = matches!(
+            self.mode,
+            Mode::Editor | Mode::RelatedPicker | Mode::ConfirmRemoveRelated(_)
+        );
         self.generation = self.generation.saturating_add(1);
         self.last_change = Instant::now();
-        let key = hash_latex(&self.preview_latex);
-        if let Some(image) = self.cache.get(&key) {
-            self.preview_protocol = Some(self.graphics.protocol_for(image.clone()));
-            self.preview = Some(image.clone());
-            self.preview_error = None;
-            self.dispatched_generation = self.generation;
-        } else {
+        let new_key = render_cache::key(&self.preview_latex, self.preview_px);
+
+        if new_key != self.preview_cache_key {
+            // Switching to a different equation: stash the current encoded protocol so
+            // coming back to it doesn't require re-encoding.
+            if let Some(proto) = self.preview_protocol.take() {
+                self.remember_protocol(self.preview_cache_key, proto);
+            }
+            self.preview_cache_key = new_key;
             self.preview_error = None;
         }
+
+        if self.preview_protocol.is_some() {
+            // Already displaying the right equation — nothing to do.
+            self.dispatched_generation = self.generation;
+            return;
+        }
+
+        if let Some(display) = self.cache.get(&new_key).cloned() {
+            let protocol = self
+                .take_protocol(new_key)
+                .unwrap_or_else(|| self.graphics.protocol_from(display.clone()));
+            self.preview_protocol = Some(protocol);
+            self.preview = Some(display);
+            self.preview_error = None;
+            self.dispatched_generation = self.generation;
+            return;
+        }
+
+        if let Some(raw) = render_cache::load(&self.preview_latex, self.preview_px) {
+            let display = self.graphics.recolor(raw);
+            self.remember_cache(new_key, display.clone());
+            let protocol = self
+                .take_protocol(new_key)
+                .unwrap_or_else(|| self.graphics.protocol_from(display.clone()));
+            self.preview_protocol = Some(protocol);
+            self.preview = Some(display);
+            self.preview_error = None;
+            self.dispatched_generation = self.generation;
+        }
+    }
+
+    fn schedule_warm_neighbors(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let mut jobs = Vec::new();
+        let mut seen = HashSet::new();
+        for distance in 1..=WARM_RADIUS {
+            for index in [
+                self.cursor.checked_sub(distance),
+                self.cursor.checked_add(distance),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let Some(item) = self.items.get(index) else {
+                    continue;
+                };
+                let key = render_cache::key(&item.latex, item.px_height);
+                if !seen.insert(key) || self.warm_failed.contains(&key) {
+                    continue;
+                }
+
+                if let Some(display) = self.cache.get(&key).cloned() {
+                    self.queue_protocol_warm(key, display);
+                    continue;
+                }
+
+                jobs.push(WarmJob {
+                    latex: item.latex.clone(),
+                    px: item.px_height,
+                });
+            }
+        }
+
+        if !jobs.is_empty() {
+            self.warm_worker.send(jobs);
+        }
+    }
+
+    fn queue_protocol_warm(&mut self, key: u64, display: RgbaImage) {
+        if self.protocol_cache.contains_key(&key)
+            || self.protocol_warm_inflight.contains(&key)
+            || (key == self.preview_cache_key && self.preview_protocol.is_some())
+        {
+            return;
+        }
+        let Some(available) = self.preview_warm_size else {
+            return;
+        };
+
+        let protocol = self.graphics.protocol_from(display);
+        let size = protocol.size_for(ratatui_image::Resize::Fit(None), available);
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+
+        self.protocol_warm_inflight.insert(key);
+        self.protocol_warm_worker.send(vec![ProtocolWarmJob {
+            key,
+            protocol,
+            size,
+        }]);
     }
 
     fn open_editor(&mut self, id: Option<EquationId>) {
@@ -846,6 +1059,50 @@ impl AppState {
             }
         }
     }
+
+    fn remember_protocol(&mut self, key: u64, protocol: StatefulProtocol) {
+        self.protocol_cache_order
+            .retain(|cached_key| *cached_key != key);
+        self.protocol_cache_order.push_back(key);
+        self.protocol_cache.insert(key, protocol);
+        while self.protocol_cache_order.len() > PROTOCOL_CACHE_CAPACITY {
+            if let Some(old) = self.protocol_cache_order.pop_front() {
+                self.protocol_cache.remove(&old);
+            }
+        }
+    }
+
+    fn take_protocol(&mut self, key: u64) -> Option<StatefulProtocol> {
+        self.protocol_cache_order
+            .retain(|cached_key| *cached_key != key);
+        self.protocol_cache.remove(&key)
+    }
+
+    fn adjust_zoom(&mut self, increase: bool) -> anyhow::Result<()> {
+        let Some(mut eq) = self.selected.clone() else {
+            return Ok(());
+        };
+        let new_px = if increase {
+            (eq.px_height + 16).min(512)
+        } else {
+            eq.px_height.saturating_sub(16).max(16)
+        };
+        if new_px == eq.px_height {
+            return Ok(());
+        }
+        eq.px_height = new_px;
+        self.store.update(&eq)?;
+        let id = eq.id;
+        self.selected = Some(eq);
+        if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            item.px_height = new_px;
+        }
+        if let Some(item) = self.all_items.iter_mut().find(|i| i.id == id) {
+            item.px_height = new_px;
+        }
+        self.schedule_selected();
+        Ok(())
+    }
 }
 
 fn seed(store: &mut Store) -> anyhow::Result<()> {
@@ -863,12 +1120,6 @@ fn seed(store: &mut Store) -> anyhow::Result<()> {
         store.insert(&eq)?;
     }
     Ok(())
-}
-
-fn hash_latex(latex: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    latex.hash(&mut hasher);
-    hasher.finish()
 }
 
 fn format_refs(references: &[Reference]) -> String {

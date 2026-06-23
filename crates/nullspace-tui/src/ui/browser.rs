@@ -47,7 +47,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .highlight_symbol("> ");
     frame.render_stateful_widget(list, panes[0], &mut state);
-    widgets::preview_pane(frame, panes[1], app, "Preview");
+    let preview_title = format!("Preview ({}px  +/- zoom)", app.preview_px);
+    widgets::preview_pane(frame, panes[1], app, &preview_title);
 
     if matches!(app.mode, Mode::Search | Mode::VariableLookup) {
         let title = if matches!(app.mode, Mode::Search) {

@@ -15,7 +15,7 @@ pub fn preview_pane(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, title
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if let Some(protocol) = &mut app.preview_protocol {
+    if app.preview_protocol.is_some() {
         let error_height = if app.preview_error.is_some() {
             4.min(inner.height)
         } else {
@@ -25,9 +25,15 @@ pub fn preview_pane(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, title
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(error_height)])
             .split(inner);
+        app.set_preview_warm_size(Size {
+            width: chunks[0].width,
+            height: chunks[0].height,
+        });
         frame.render_widget(Clear, chunks[0]);
-        let image_area = centered_image_area(protocol, chunks[0]);
-        frame.render_stateful_widget(StatefulImage::default(), image_area, protocol);
+        if let Some(protocol) = &mut app.preview_protocol {
+            let image_area = centered_image_area(protocol, chunks[0]);
+            frame.render_stateful_widget(StatefulImage::default(), image_area, protocol);
+        }
         if let Some(error) = &app.preview_error {
             frame.render_widget(render_stale_warning(error), chunks[1]);
         }
@@ -44,18 +50,23 @@ pub fn preview_pane(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, title
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(caption_height)])
         .split(inner);
+    app.set_preview_warm_size(Size {
+        width: chunks[0].width,
+        height: chunks[0].height,
+    });
 
     frame.render_widget(Paragraph::new("Rendering..."), chunks[0]);
 
     if !app.preview_latex.is_empty() {
-        let mut lines = Vec::new();
-        lines.push(Line::from(""));
-        lines.push(Line::styled(
-            to_unicode_approx(&app.preview_latex),
-            Style::default().add_modifier(Modifier::BOLD),
-        ));
-        lines.push(Line::from(""));
-        lines.push(Line::from(app.preview_latex.clone()));
+        let lines = vec![
+            Line::from(""),
+            Line::styled(
+                to_unicode_approx(&app.preview_latex),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(app.preview_latex.clone()),
+        ];
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[1]);
     }
 }
@@ -102,7 +113,9 @@ fn centered_image_area(protocol: &ratatui_image::protocol::StatefulProtocol, are
 
 pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let help = match app.mode {
-        Mode::Browser => "j/k move  / search  v symbol  enter/e edit  n new  d delete  q quit",
+        Mode::Browser => {
+            "j/k move  / search  v symbol  enter edit  +/- zoom  n new  d delete  q quit"
+        }
         Mode::Search => "type search  enter apply  esc clear",
         Mode::VariableLookup => "type symbol  enter apply  esc clear",
         Mode::Editor => "tab field  esc back",

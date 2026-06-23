@@ -32,7 +32,7 @@ impl Store {
 
     pub fn list(&self) -> Result<Vec<EquationSummary>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, description, latex FROM equations ORDER BY name COLLATE NOCASE",
+            "SELECT id, name, description, latex, px_height FROM equations ORDER BY name COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], summary_from_row)?;
         collect_summaries(rows)
@@ -43,14 +43,14 @@ impl Store {
         if query.is_empty() {
             return self.list();
         }
-        let pattern = format!("%{}%", query.to_lowercase());
+        let pattern = format!("%{}%", like_escape(&query.to_lowercase()));
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT e.id, e.name, e.description, e.latex
+            "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
              FROM equations e
              LEFT JOIN tags t ON t.equation_id = e.id
-             WHERE lower(e.name) LIKE ?1
-                OR lower(e.description) LIKE ?1
-                OR lower(t.tag) LIKE ?1
+             WHERE lower(e.name)        LIKE ?1 ESCAPE '\\'
+                OR lower(e.description) LIKE ?1 ESCAPE '\\'
+                OR lower(t.tag)         LIKE ?1 ESCAPE '\\'
              ORDER BY e.name COLLATE NOCASE",
         )?;
         let rows = stmt.query_map(params![pattern], summary_from_row)?;
@@ -63,7 +63,7 @@ impl Store {
             return self.list();
         }
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT e.id, e.name, e.description, e.latex
+            "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
              FROM equations e
              JOIN variables v ON v.equation_id = e.id
              WHERE v.symbol = ?1
@@ -98,21 +98,22 @@ impl Store {
         let mut eq = self
             .conn
             .query_row(
-                "SELECT id, name, description, latex, created_at, updated_at FROM equations WHERE id=?1",
+                "SELECT id, name, description, latex, px_height, created_at, updated_at FROM equations WHERE id=?1",
                 params![id_s],
                 |row| {
                     let raw_id: String = row.get(0)?;
                     Ok(Equation {
-                        id: EquationId::parse(&raw_id).expect("stored ids are valid UUIDs"),
+                        id: parse_id_col(&raw_id)?,
                         name: row.get(1)?,
                         description: row.get(2)?,
                         latex: row.get(3)?,
+                        px_height: row.get::<_, i64>(4)? as u32,
                         references: Vec::new(),
                         tags: Vec::new(),
                         variables: Vec::new(),
                         related: Vec::new(),
-                        created_at: row.get(4)?,
-                        updated_at: row.get(5)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
                     })
                 },
             )
@@ -137,12 +138,13 @@ impl Store {
     pub fn update(&mut self, eq: &Equation) -> Result<()> {
         let tx = self.conn.transaction()?;
         let changed = tx.execute(
-            "UPDATE equations SET name=?2, description=?3, latex=?4, created_at=?5, updated_at=?6 WHERE id=?1",
+            "UPDATE equations SET name=?2, description=?3, latex=?4, px_height=?5, created_at=?6, updated_at=?7 WHERE id=?1",
             params![
                 eq.id.to_string(),
                 eq.name,
                 eq.description,
                 eq.latex,
+                eq.px_height as i64,
                 eq.created_at,
                 eq.updated_at
             ],
@@ -232,7 +234,7 @@ impl Store {
             let a: String = row.get(0)?;
             let b: String = row.get(1)?;
             let other = if a == id { b } else { a };
-            Ok(EquationId::parse(&other).expect("stored ids are valid UUIDs"))
+            parse_id_col(&other)
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Into::into)
@@ -241,12 +243,13 @@ impl Store {
 
 fn insert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             eq.id.to_string(),
             eq.name,
             eq.description,
             eq.latex,
+            eq.px_height as i64,
             eq.created_at,
             eq.updated_at
         ],
@@ -256,12 +259,13 @@ fn insert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
 
 fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO equations (id, name, description, latex, px_height, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             description=excluded.description,
             latex=excluded.latex,
+            px_height=excluded.px_height,
             created_at=excluded.created_at,
             updated_at=excluded.updated_at",
         params![
@@ -269,6 +273,7 @@ fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
             eq.name,
             eq.description,
             eq.latex,
+            eq.px_height as i64,
             eq.created_at,
             eq.updated_at
         ],
@@ -330,10 +335,30 @@ fn delete_children_conn(conn: &Connection, id: EquationId) -> Result<()> {
 fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<EquationSummary> {
     let id: String = row.get(0)?;
     Ok(EquationSummary {
-        id: EquationId::parse(&id).expect("stored ids are valid UUIDs"),
+        id: parse_id_col(&id)?,
         name: row.get(1)?,
         description: row.get(2)?,
         latex: row.get(3)?,
+        px_height: row.get::<_, i64>(4)? as u32,
+    })
+}
+
+fn like_escape(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn parse_id_col(raw: &str) -> rusqlite::Result<EquationId> {
+    EquationId::parse(raw).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(crate::error::Error::NotFound(format!(
+                "invalid uuid: {raw}"
+            ))),
+        )
     })
 }
 
@@ -352,6 +377,7 @@ mod tests {
     fn full_equation(name: &str) -> Equation {
         let mut eq = Equation::new(name.to_string(), "E = mc^2".to_string());
         eq.description = "mass energy".to_string();
+        eq.px_height = 48;
         eq.variables = vec![
             Variable {
                 symbol: "E".to_string(),
@@ -499,5 +525,30 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let id = EquationId::new();
         assert!(matches!(store.get(id), Err(Error::NotFound(s)) if s == id.to_string()));
+    }
+
+    #[test]
+    fn search_percent_is_literal_not_wildcard() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .insert(&Equation::new("50% off".to_string(), "x".to_string()))
+            .unwrap();
+        store
+            .insert(&Equation::new("500 off".to_string(), "x".to_string()))
+            .unwrap();
+        let results = store.search("50%").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "50% off");
+    }
+
+    #[test]
+    fn search_is_case_insensitive() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut eq = Equation::new("Energy".to_string(), "E=mc^2".to_string());
+        eq.tags = vec!["physics".to_string()];
+        store.insert(&eq).unwrap();
+        let results = store.search("PHYSICS").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Energy");
     }
 }

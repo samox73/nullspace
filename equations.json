@@ -1,0 +1,52 @@
+[
+  {
+    "id": "d16235a2-c744-4baa-b169-c3519d693b26",
+    "name": "Euler identity",
+    "description": "Seed equation",
+    "latex": "e^{i\\pi} + 1 = 0",
+    "references": [],
+    "tags": [],
+    "variables": [],
+    "related": [],
+    "created_at": "2026-06-23T11:50:51.884132717Z",
+    "updated_at": "2026-06-23T11:50:51.884132717Z"
+  },
+  {
+    "id": "712a830a-ccca-4eea-8f29-ff7013fb0e9b",
+    "name": "Gauss law",
+    "description": "Seed equation",
+    "latex": "\\nabla \\cdot \\mathbf{E} = \\rho/\\varepsilon_0",
+    "references": [],
+    "tags": [],
+    "variables": [],
+    "related": [],
+    "created_at": "2026-06-23T11:50:51.8826244Z",
+    "updated_at": "2026-06-23T11:50:51.8826244Z"
+  },
+  {
+    "id": "cd316887-a2e9-4362-a775-a649d4d04f05",
+    "name": "Mass energy equivalence",
+    "description": "Seed equation",
+    "latex": "E = mc^2",
+    "references": [],
+    "tags": [],
+    "variables": [],
+    "related": [],
+    "created_at": "2026-06-23T11:50:51.881104531Z",
+    "updated_at": "2026-06-23T11:50:51.881104531Z"
+  },
+  {
+    "id": "d1a9d8f8-d1f3-46ba-b288-66fded1ff3ad",
+    "name": "Non-interacting phonon Hamiltonian",
+    "description": "",
+    "latex": "\\hat{H}_\\text{ph} = \\sum_{\\mathbf{q}\\nu} \\hbar \\omega",
+    "references": [],
+    "tags": [
+      "hamiltonian"
+    ],
+    "variables": [],
+    "related": [],
+    "created_at": "2026-06-23T11:43:21.105974415Z",
+    "updated_at": "2026-06-23T12:15:08.798021606Z"
+  }
+]

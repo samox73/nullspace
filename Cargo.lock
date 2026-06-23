@@ -1397,6 +1397,7 @@ dependencies = [
  "nullspace-core",
  "ratatui",
  "ratatui-image",
+ "rayon",
  "serde_json",
 ]
 

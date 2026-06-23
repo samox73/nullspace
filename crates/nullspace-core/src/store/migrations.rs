@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS equations (
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     latex       TEXT NOT NULL,
+    px_height   INTEGER NOT NULL DEFAULT 48,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -47,5 +48,15 @@ CREATE TABLE IF NOT EXISTS related (
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA)?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < 1 {
+        // For databases created before px_height was added; new databases already have
+        // the column from SCHEMA above, so ignore the error if it already exists.
+        let _ = conn.execute(
+            "ALTER TABLE equations ADD COLUMN px_height INTEGER NOT NULL DEFAULT 48",
+            [],
+        );
+        conn.pragma_update(None, "user_version", 1_i64)?;
+    }
     Ok(())
 }

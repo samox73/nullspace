@@ -2,9 +2,12 @@ mod action;
 mod app;
 mod event;
 mod graphics;
+mod protocol_warm_worker;
+mod render_cache;
 mod render_worker;
 mod tui;
 mod ui;
+mod warm_worker;
 
 use std::path::PathBuf;
 use std::time::Duration;
