@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{AppState, Mode};
+use crate::app::{AppState, CacheStatus, Mode};
 use crate::ui::widgets;
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
@@ -20,23 +20,36 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(outer[0]);
 
+    const CACHE_MARKER_GUTTER: &str = "  ";
+
     let items = app
         .items
         .iter()
-        .map(|item| {
-            ListItem::new(vec![
-                Line::styled(&item.name, Style::default().add_modifier(Modifier::BOLD)),
-                Line::from(vec![Span::styled(
-                    &item.description,
-                    Style::default().fg(Color::DarkGray),
-                )]),
-                Line::from(to_unicode_approx(&item.latex)),
-            ])
+        .enumerate()
+        .flat_map(|(index, item)| {
+            let marker = match app.cache_status_for(&item.latex, item.px_height) {
+                CacheStatus::Cached => "•",
+                CacheStatus::Loading => app.cache_spinner(),
+                CacheStatus::Empty => " ",
+            };
+            let item = ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(marker, Style::default().fg(Color::Yellow)),
+                    Span::raw(" "),
+                    Span::styled(&item.name, Style::default().add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::raw(CACHE_MARKER_GUTTER),
+                    Span::raw(to_unicode_approx(&item.latex)),
+                ]),
+            ]);
+            let spacer = (index + 1 < app.items.len()).then(|| ListItem::new(Line::from("")));
+            std::iter::once(item).chain(spacer)
         })
         .collect::<Vec<_>>();
     let mut state = ListState::default();
     if !items.is_empty() {
-        state.select(Some(app.cursor));
+        state.select(Some(app.cursor * 2));
     }
     let list = List::new(items)
         .block(

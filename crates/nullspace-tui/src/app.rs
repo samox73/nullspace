@@ -92,18 +92,27 @@ pub struct AppState {
     last_change: Instant,
     cache: HashMap<u64, RgbaImage>,
     cache_order: VecDeque<u64>,
+    warm_inflight: HashSet<u64>,
     warm_failed: HashSet<u64>,
     protocol_warm_inflight: HashSet<u64>,
     protocol_cache: HashMap<u64, StatefulProtocol>,
     protocol_cache_order: VecDeque<u64>,
     preview_cache_key: u64,
     preview_warm_size: Option<Size>,
+    render_inflight_key: Option<u64>,
     graphics: Graphics,
 }
 
 pub struct Notification {
     pub message: String,
     pub created_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheStatus {
+    Cached,
+    Loading,
+    Empty,
 }
 
 impl AppState {
@@ -142,12 +151,14 @@ impl AppState {
             last_change: Instant::now(),
             cache: HashMap::new(),
             cache_order: VecDeque::new(),
+            warm_inflight: HashSet::new(),
             warm_failed: HashSet::new(),
             protocol_warm_inflight: HashSet::new(),
             protocol_cache: HashMap::new(),
             protocol_cache_order: VecDeque::new(),
             preview_cache_key: 0,
             preview_warm_size: None,
+            render_inflight_key: None,
             graphics,
         };
         app.reload()?;
@@ -194,6 +205,30 @@ impl AppState {
         ) {
             self.schedule_warm_neighbors();
         }
+    }
+
+    pub fn cache_status_for(&self, latex: &str, px: u32) -> CacheStatus {
+        let key = render_cache::key(latex, px);
+        if self.warm_inflight.contains(&key)
+            || self.protocol_warm_inflight.contains(&key)
+            || self.render_inflight_key == Some(key)
+            || (key == self.preview_cache_key && self.generation != self.dispatched_generation)
+        {
+            CacheStatus::Loading
+        } else if self.cache.contains_key(&key)
+            || self.protocol_cache.contains_key(&key)
+            || (key == self.preview_cache_key && self.preview_protocol.is_some())
+        {
+            CacheStatus::Cached
+        } else {
+            CacheStatus::Empty
+        }
+    }
+
+    pub fn cache_spinner(&self) -> &'static str {
+        const FRAMES: [&str; 4] = ["-", "\\", "|", "/"];
+        let index = ((self.last_change.elapsed().as_millis() / 120) as usize) % FRAMES.len();
+        FRAMES[index]
     }
 
     fn refresh_items(&mut self) -> anyhow::Result<()> {
@@ -507,6 +542,7 @@ impl AppState {
 
         while let Some(result) = self.warm_worker.try_recv() {
             let key = render_cache::key(&result.latex, result.px);
+            self.warm_inflight.remove(&key);
             match result.outcome {
                 WarmOutcome::Ready(Ok(raw)) => {
                     let display = self.graphics.recolor(raw);
@@ -531,6 +567,9 @@ impl AppState {
 
         while let Some(result) = self.worker.try_recv() {
             let key = render_cache::key(&result.latex, result.px);
+            if self.render_inflight_key == Some(key) {
+                self.render_inflight_key = None;
+            }
             let is_current_generation = result.generation >= self.generation;
             let is_current_preview = key == self.preview_cache_key;
             match result.image {
@@ -578,6 +617,8 @@ impl AppState {
                 latex: self.preview_latex.clone(),
                 px: self.preview_px,
             });
+            self.render_inflight_key =
+                Some(render_cache::key(&self.preview_latex, self.preview_px));
             self.dispatched_generation = self.generation;
         }
 
@@ -646,6 +687,7 @@ impl AppState {
         if self.preview_protocol.is_some() {
             // Already displaying the right equation — nothing to do.
             self.dispatched_generation = self.generation;
+            self.render_inflight_key = None;
             return;
         }
 
@@ -657,6 +699,7 @@ impl AppState {
             self.preview = Some(display);
             self.preview_error = None;
             self.dispatched_generation = self.generation;
+            self.render_inflight_key = None;
             return;
         }
 
@@ -670,6 +713,7 @@ impl AppState {
             self.preview = Some(display);
             self.preview_error = None;
             self.dispatched_generation = self.generation;
+            self.render_inflight_key = None;
         }
     }
 
@@ -705,6 +749,7 @@ impl AppState {
                     latex: item.latex.clone(),
                     px: item.px_height,
                 });
+                self.warm_inflight.insert(key);
             }
         }
 
