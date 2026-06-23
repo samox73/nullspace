@@ -30,7 +30,7 @@ const PLACEHOLDERS: [&str; 7] = [
     "Mass energy equivalence, Euler identity",
 ];
 
-pub fn draw(frame: &mut Frame<'_>, app: &AppState) {
+pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])

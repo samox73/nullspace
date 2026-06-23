@@ -15,3 +15,5 @@ ratatui-image = { version = "11", default-features = false, features = ["crosste
 directories = "5"
 anyhow = "1"
 image = "0.25"
+libc = "0.2"
+serde_json = "1"

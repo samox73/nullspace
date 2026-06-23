@@ -9,6 +9,9 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
     match mode {
         Mode::Browser => match key.code {
             KeyCode::Char('q') => Action::Quit,
+            KeyCode::Char('/') => Action::StartSearch,
+            KeyCode::Char('v') => Action::StartVariableLookup,
+            KeyCode::Esc => Action::ClearFilter,
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
             KeyCode::Char('h') => Action::FocusLeft,
@@ -17,6 +20,14 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             KeyCode::Char('d') => Action::DeleteRequest,
             KeyCode::Char('e') => Action::EditCurrent,
             KeyCode::Enter => Action::OpenCurrent,
+            _ => Action::None,
+        },
+        Mode::Search | Mode::VariableLookup => match key.code {
+            KeyCode::Esc => Action::BrowserFilterCancel,
+            KeyCode::Enter => Action::BrowserFilterAccept,
+            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                Action::BrowserFilterInput(key)
+            }
             _ => Action::None,
         },
         Mode::ConfirmDelete(_) => match key.code {

@@ -1,6 +1,7 @@
 mod action;
 mod app;
 mod event;
+mod graphics;
 mod render_worker;
 mod tui;
 mod ui;
@@ -11,6 +12,7 @@ use std::time::Duration;
 use anyhow::Context;
 use app::AppState;
 use crossterm::event as ct_event;
+use nullspace_core::{Equation, Store};
 
 fn main() -> anyhow::Result<()> {
     let default_hook = std::panic::take_hook();
@@ -19,12 +21,90 @@ fn main() -> anyhow::Result<()> {
         default_hook(info);
     }));
 
+    let args = Args::parse()?;
     let db_path = db_path()?;
-    let mut app = AppState::open(&db_path)?;
+    if let Some(path) = args.export_path {
+        export_json(&db_path, &path)?;
+        return Ok(());
+    }
+    if let Some(path) = args.import_path {
+        import_json(&db_path, &path)?;
+        return Ok(());
+    }
+
     let mut terminal = tui::init()?;
-    let result = run(&mut terminal, &mut app);
+    let result = (|| {
+        let graphics = graphics::Graphics::detect();
+        let mut app = AppState::open(&db_path, graphics)?;
+        run(&mut terminal, &mut app)
+    })();
     tui::restore()?;
     result
+}
+
+struct Args {
+    export_path: Option<PathBuf>,
+    import_path: Option<PathBuf>,
+}
+
+impl Args {
+    fn parse() -> anyhow::Result<Self> {
+        let mut export_path = None;
+        let mut import_path = None;
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--export" => {
+                    export_path = Some(PathBuf::from(
+                        args.next().context("--export requires a path")?,
+                    ));
+                }
+                "--import" => {
+                    import_path = Some(PathBuf::from(
+                        args.next().context("--import requires a path")?,
+                    ));
+                }
+                "--help" | "-h" => {
+                    println!("Usage: nullspace [--export PATH] [--import PATH]");
+                    std::process::exit(0);
+                }
+                other => anyhow::bail!("unknown argument: {other}"),
+            }
+        }
+        if export_path.is_some() && import_path.is_some() {
+            anyhow::bail!("--export and --import cannot be used together");
+        }
+        Ok(Self {
+            export_path,
+            import_path,
+        })
+    }
+}
+
+fn export_json(db_path: &std::path::Path, output_path: &std::path::Path) -> anyhow::Result<()> {
+    let store = Store::open(db_path)?;
+    let equations = store.all()?;
+    let json = serde_json::to_string_pretty(&equations)?;
+    std::fs::write(output_path, json)?;
+    println!(
+        "exported {} equation(s) to {}",
+        equations.len(),
+        output_path.display()
+    );
+    Ok(())
+}
+
+fn import_json(db_path: &std::path::Path, input_path: &std::path::Path) -> anyhow::Result<()> {
+    let raw = std::fs::read_to_string(input_path)?;
+    let equations: Vec<Equation> = serde_json::from_str(&raw)?;
+    let mut store = Store::open(db_path)?;
+    store.import_equations(&equations)?;
+    println!(
+        "imported {} equation(s) from {}",
+        equations.len(),
+        input_path.display()
+    );
+    Ok(())
 }
 
 fn run(

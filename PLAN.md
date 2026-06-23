@@ -819,9 +819,9 @@ Each is independently shippable; give each its own small DoD.
 | 3 TUI browser | ✅ done | `cargo run -p nullspace-tui` → browser navigates, quits cleanly |
 | 4 Worker + debounce | ✅ done | renders coalesce at ~150ms, cache hits instant |
 | 5 Editor (= detail) + delete | ✅ done | create/edit/delete persist; autosave + error handling |
-| **6 Image display** | **TODO (next)** | actual image shows in right pane on Kitty/WezTerm |
-| 7 RaTeX swap | TODO | real equations render; `Err` path intact; tests green |
-| 8 Polish | partial | per chosen feature |
+| 6 Image display | ✅ done | rendered image is drawn in the right pane via `ratatui-image` |
+| 7 RaTeX swap | ✅ done | real equations render through RaTeX SVG; `Err` path intact; tests green |
+| 8 Polish | partial | search, variable lookup, JSON import/export done |
 
 ---
 

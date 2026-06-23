@@ -10,7 +10,7 @@ use ratatui::{
 use crate::app::{AppState, Mode};
 use crate::ui::widgets;
 
-pub fn draw(frame: &mut Frame<'_>, app: &AppState) {
+pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
@@ -39,11 +39,30 @@ pub fn draw(frame: &mut Frame<'_>, app: &AppState) {
         state.select(Some(app.cursor));
     }
     let list = List::new(items)
-        .block(Block::default().title("Equations").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(app.browser_title())
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .highlight_symbol("> ");
     frame.render_stateful_widget(list, panes[0], &mut state);
     widgets::preview_pane(frame, panes[1], app, "Preview");
+
+    if matches!(app.mode, Mode::Search | Mode::VariableLookup) {
+        let title = if matches!(app.mode, Mode::Search) {
+            "Search"
+        } else {
+            "Variable lookup"
+        };
+        let prompt = format!("{}  enter apply  esc clear", app.browser_title());
+        let area = centered_rect(64, 3, frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(prompt).block(Block::default().title(title).borders(Borders::ALL)),
+            area,
+        );
+    }
 
     if let Mode::ConfirmDelete(id) = app.mode {
         let name = app

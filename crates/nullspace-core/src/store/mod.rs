@@ -2,7 +2,7 @@ mod migrations;
 
 use crate::error::{Error, Result};
 use crate::model::*;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::Path;
 
 pub struct Store {
@@ -34,17 +34,63 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, description, latex FROM equations ORDER BY name COLLATE NOCASE",
         )?;
-        let rows = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            Ok(EquationSummary {
-                id: EquationId::parse(&id).expect("stored ids are valid UUIDs"),
-                name: row.get(1)?,
-                description: row.get(2)?,
-                latex: row.get(3)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        let rows = stmt.query_map([], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    pub fn search(&self, query: &str) -> Result<Vec<EquationSummary>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return self.list();
+        }
+        let pattern = format!("%{}%", query.to_lowercase());
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT e.id, e.name, e.description, e.latex
+             FROM equations e
+             LEFT JOIN tags t ON t.equation_id = e.id
+             WHERE lower(e.name) LIKE ?1
+                OR lower(e.description) LIKE ?1
+                OR lower(t.tag) LIKE ?1
+             ORDER BY e.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map(params![pattern], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    pub fn by_symbol(&self, symbol: &str) -> Result<Vec<EquationSummary>> {
+        let symbol = symbol.trim();
+        if symbol.is_empty() {
+            return self.list();
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT e.id, e.name, e.description, e.latex
+             FROM equations e
+             JOIN variables v ON v.equation_id = e.id
+             WHERE v.symbol = ?1
+             ORDER BY e.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map(params![symbol], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    pub fn all(&self) -> Result<Vec<Equation>> {
+        self.list()?
+            .into_iter()
+            .map(|summary| self.get(summary.id))
+            .collect()
+    }
+
+    pub fn import_equations(&mut self, equations: &[Equation]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for equation in equations {
+            upsert_equation_row(&tx, equation)?;
+            delete_children_conn(&tx, equation.id)?;
+        }
+        for equation in equations {
+            insert_children(&tx, equation)?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn get(&self, id: EquationId) -> Result<Equation> {
@@ -208,6 +254,28 @@ fn insert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
     Ok(())
 }
 
+fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
+    conn.execute(
+        "INSERT INTO equations (id, name, description, latex, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            description=excluded.description,
+            latex=excluded.latex,
+            created_at=excluded.created_at,
+            updated_at=excluded.updated_at",
+        params![
+            eq.id.to_string(),
+            eq.name,
+            eq.description,
+            eq.latex,
+            eq.created_at,
+            eq.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
 fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
     let id = eq.id.to_string();
     for (position, variable) in eq.variables.iter().enumerate() {
@@ -247,12 +315,34 @@ fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
 }
 
 fn delete_children(conn: &Connection, id: EquationId) -> Result<()> {
+    delete_children_conn(conn, id)
+}
+
+fn delete_children_conn(conn: &Connection, id: EquationId) -> Result<()> {
     let id = id.to_string();
     conn.execute("DELETE FROM variables WHERE equation_id=?1", params![id])?;
     conn.execute("DELETE FROM tags WHERE equation_id=?1", params![id])?;
     conn.execute("DELETE FROM refs WHERE equation_id=?1", params![id])?;
     conn.execute("DELETE FROM related WHERE a=?1 OR b=?1", params![id])?;
     Ok(())
+}
+
+fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<EquationSummary> {
+    let id: String = row.get(0)?;
+    Ok(EquationSummary {
+        id: EquationId::parse(&id).expect("stored ids are valid UUIDs"),
+        name: row.get(1)?,
+        description: row.get(2)?,
+        latex: row.get(3)?,
+    })
+}
+
+fn collect_summaries<I>(rows: I) -> Result<Vec<EquationSummary>>
+where
+    I: Iterator<Item = rusqlite::Result<EquationSummary>>,
+{
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -305,6 +395,62 @@ mod tests {
             .unwrap();
         let names: Vec<_> = store.list().unwrap().into_iter().map(|e| e.name).collect();
         assert_eq!(names, vec!["Alpha", "Zeta"]);
+    }
+
+    #[test]
+    fn search_matches_name_description_and_tags() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut energy = full_equation("Energy");
+        energy.description = "mass energy".to_string();
+        energy.tags = vec!["physics".to_string()];
+        let mut area = Equation::new("Area".to_string(), "A = \\pi r^2".to_string());
+        area.description = "circle".to_string();
+        area.tags = vec!["geometry".to_string()];
+        store.insert(&energy).unwrap();
+        store.insert(&area).unwrap();
+
+        let physics = store.search("physics").unwrap();
+        assert_eq!(physics.len(), 1);
+        assert_eq!(physics[0].name, "Energy");
+        let circle = store.search("circle").unwrap();
+        assert_eq!(circle.len(), 1);
+        assert_eq!(circle[0].name, "Area");
+    }
+
+    #[test]
+    fn by_symbol_returns_equations_using_variable() {
+        let mut store = Store::open_in_memory().unwrap();
+        let energy = full_equation("Energy");
+        let mut area = Equation::new("Area".to_string(), "A = \\pi r^2".to_string());
+        area.variables = vec![Variable {
+            symbol: "A".to_string(),
+            description: "area".to_string(),
+        }];
+        store.insert(&energy).unwrap();
+        store.insert(&area).unwrap();
+
+        let matches = store.by_symbol("E").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "Energy");
+    }
+
+    #[test]
+    fn all_and_import_equations_roundtrip_related_records() {
+        let mut source = Store::open_in_memory().unwrap();
+        let mut a = full_equation("A");
+        let b = full_equation("B");
+        source.insert(&a).unwrap();
+        source.insert(&b).unwrap();
+        a.related.push(b.id);
+        source.update(&a).unwrap();
+
+        let exported = source.all().unwrap();
+        let mut target = Store::open_in_memory().unwrap();
+        target.import_equations(&exported).unwrap();
+
+        assert_eq!(target.all().unwrap().len(), 2);
+        assert!(target.get(a.id).unwrap().related.contains(&b.id));
+        assert!(target.get(b.id).unwrap().related.contains(&a.id));
     }
 
     #[test]

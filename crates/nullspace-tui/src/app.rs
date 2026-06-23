@@ -3,17 +3,21 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use image::RgbaImage;
 use nullspace_core::{
     render::render_image, Equation, EquationId, EquationSummary, Reference, Store, Variable,
 };
-use image::RgbaImage;
+use ratatui_image::protocol::StatefulProtocol;
 
 use crate::action::Action;
+use crate::graphics::Graphics;
 use crate::render_worker::{RenderJob, RenderWorker};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Browser,
+    Search,
+    VariableLookup,
     Editor,
     RelatedPicker,
     ConfirmDelete(EquationId),
@@ -46,10 +50,19 @@ pub struct RelatedPickerState {
     pub query: String,
 }
 
+#[derive(Clone)]
+pub enum BrowserFilter {
+    None,
+    Search(String),
+    Variable(String),
+}
+
 pub struct AppState {
     pub store: Store,
     pub mode: Mode,
+    pub all_items: Vec<EquationSummary>,
     pub items: Vec<EquationSummary>,
+    pub browser_filter: BrowserFilter,
     pub cursor: usize,
     pub focus: Pane,
     pub should_quit: bool,
@@ -58,6 +71,7 @@ pub struct AppState {
     pub selected: Option<Equation>,
     pub editor: Option<EditorState>,
     pub preview: Option<RgbaImage>,
+    pub preview_protocol: Option<StatefulProtocol>,
     pub preview_error: Option<String>,
     pub preview_latex: String,
     pub notification: Option<Notification>,
@@ -68,6 +82,7 @@ pub struct AppState {
     last_change: Instant,
     cache: HashMap<u64, RgbaImage>,
     cache_order: VecDeque<u64>,
+    graphics: Graphics,
 }
 
 pub struct Notification {
@@ -76,23 +91,27 @@ pub struct Notification {
 }
 
 impl AppState {
-    pub fn open(path: &Path) -> anyhow::Result<Self> {
+    pub fn open(path: &Path, graphics: Graphics) -> anyhow::Result<Self> {
         let mut store = Store::open(path)?;
         if store.list()?.is_empty() {
             seed(&mut store)?;
         }
+        let graphics_ok = graphics.graphics_ok;
         let mut app = Self {
             store,
             mode: Mode::Browser,
+            all_items: Vec::new(),
             items: Vec::new(),
+            browser_filter: BrowserFilter::None,
             cursor: 0,
             focus: Pane::List,
             should_quit: false,
-            graphics_ok: terminal_graphics_detected(),
+            graphics_ok,
             status: "Ready".to_string(),
             selected: None,
             editor: None,
             preview: None,
+            preview_protocol: None,
             preview_error: None,
             preview_latex: String::new(),
             notification: None,
@@ -103,6 +122,7 @@ impl AppState {
             last_change: Instant::now(),
             cache: HashMap::new(),
             cache_order: VecDeque::new(),
+            graphics,
         };
         app.reload()?;
         app.schedule_selected();
@@ -110,7 +130,14 @@ impl AppState {
     }
 
     pub fn reload(&mut self) -> anyhow::Result<()> {
-        self.items = self.store.list()?;
+        let selected = self.selected_id();
+        self.all_items = self.store.list()?;
+        self.refresh_items()?;
+        if let Some(id) = selected {
+            if let Some(index) = self.items.iter().position(|item| item.id == id) {
+                self.cursor = index;
+            }
+        }
         if self.cursor >= self.items.len() {
             self.cursor = self.items.len().saturating_sub(1);
         }
@@ -120,6 +147,59 @@ impl AppState {
 
     pub fn selected_id(&self) -> Option<EquationId> {
         self.items.get(self.cursor).map(|item| item.id)
+    }
+
+    pub fn browser_title(&self) -> String {
+        match &self.browser_filter {
+            BrowserFilter::None => "Equations".to_string(),
+            BrowserFilter::Search(query) => format!("Search: {}", query),
+            BrowserFilter::Variable(symbol) => format!("Variable: {}", symbol),
+        }
+    }
+
+    fn refresh_items(&mut self) -> anyhow::Result<()> {
+        self.items = match &self.browser_filter {
+            BrowserFilter::None => self.all_items.clone(),
+            BrowserFilter::Search(query) => self.store.search(query)?,
+            BrowserFilter::Variable(symbol) => self.store.by_symbol(symbol)?,
+        };
+        self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+        self.selected = self.selected_id().and_then(|id| self.store.get(id).ok());
+        Ok(())
+    }
+
+    fn clear_browser_filter(&mut self) -> anyhow::Result<()> {
+        self.browser_filter = BrowserFilter::None;
+        self.refresh_items()?;
+        self.status = "Filter cleared".to_string();
+        self.schedule_selected();
+        Ok(())
+    }
+
+    fn input_browser_filter(&mut self, key: crossterm::event::KeyEvent) -> anyhow::Result<()> {
+        use crossterm::event::KeyCode;
+        let query = match &mut self.browser_filter {
+            BrowserFilter::Search(query) | BrowserFilter::Variable(query) => query,
+            BrowserFilter::None => return Ok(()),
+        };
+        match key.code {
+            KeyCode::Char(ch) => query.push(ch),
+            KeyCode::Backspace => {
+                query.pop();
+            }
+            KeyCode::Delete => query.clear(),
+            _ => {}
+        }
+        self.cursor = 0;
+        self.refresh_items()?;
+        let label = match &self.browser_filter {
+            BrowserFilter::Search(_) => "Search",
+            BrowserFilter::Variable(_) => "Variable lookup",
+            BrowserFilter::None => "Filter",
+        };
+        self.status = format!("{label}: {} match(es)", self.items.len());
+        self.schedule_selected();
+        Ok(())
     }
 
     pub fn apply(&mut self, action: Action) {
@@ -161,6 +241,35 @@ impl AppState {
                 if let Some(id) = self.selected_id() {
                     self.mode = Mode::ConfirmDelete(id);
                 }
+                Ok(())
+            }
+            Action::StartSearch => {
+                self.browser_filter = BrowserFilter::Search(String::new());
+                self.mode = Mode::Search;
+                self.refresh_items()?;
+                self.status = "Search".to_string();
+                self.schedule_selected();
+                Ok(())
+            }
+            Action::StartVariableLookup => {
+                self.browser_filter = BrowserFilter::Variable(String::new());
+                self.mode = Mode::VariableLookup;
+                self.refresh_items()?;
+                self.status = "Variable lookup".to_string();
+                self.schedule_selected();
+                Ok(())
+            }
+            Action::BrowserFilterInput(key) => {
+                self.input_browser_filter(key)?;
+                Ok(())
+            }
+            Action::BrowserFilterAccept => {
+                self.mode = Mode::Browser;
+                Ok(())
+            }
+            Action::BrowserFilterCancel | Action::ClearFilter => {
+                self.clear_browser_filter()?;
+                self.mode = Mode::Browser;
                 Ok(())
             }
             Action::ConfirmYes => {
@@ -214,7 +323,7 @@ impl AppState {
                             Mode::Browser
                         }
                     }
-                    Mode::Browser => Mode::Browser,
+                    Mode::Search | Mode::VariableLookup | Mode::Browser => Mode::Browser,
                 };
                 self.schedule_selected();
                 Ok(())
@@ -282,7 +391,7 @@ impl AppState {
                     .editor
                     .as_ref()
                     .map(|editor| {
-                        parse_related(&editor.fields[6], &self.items)
+                        parse_related(&editor.fields[6], &self.all_items)
                             .len()
                             .saturating_sub(1)
                     })
@@ -352,10 +461,10 @@ impl AppState {
                 Ok(image) => {
                     self.preview_error = None;
                     self.remember_cache(hash_latex(&result.latex), image.clone());
+                    self.preview_protocol = Some(self.graphics.protocol_for(image.clone()));
                     self.preview = Some(image);
                 }
                 Err(err) => {
-                    self.preview = None;
                     self.preview_error = Some(err);
                 }
             }
@@ -407,9 +516,12 @@ impl AppState {
         self.last_change = Instant::now();
         let key = hash_latex(&self.preview_latex);
         if let Some(image) = self.cache.get(&key) {
+            self.preview_protocol = Some(self.graphics.protocol_for(image.clone()));
             self.preview = Some(image.clone());
             self.preview_error = None;
             self.dispatched_generation = self.generation;
+        } else {
+            self.preview_error = None;
         }
     }
 
@@ -423,7 +535,7 @@ impl AppState {
                 format_refs(&eq.references),
                 eq.tags.join(", "),
                 format_variables(&eq.variables),
-                format_related(&eq.related, &self.items),
+                format_related(&eq.related, &self.all_items),
             ]
         } else {
             [
@@ -473,7 +585,9 @@ impl AppState {
                 return;
             }
             KeyCode::Char('j') if focused == 6 => {
-                let max = parse_related(field, &self.items).len().saturating_sub(1);
+                let max = parse_related(field, &self.all_items)
+                    .len()
+                    .saturating_sub(1);
                 editor.related_cursor = (editor.related_cursor + 1).min(max);
                 return;
             }
@@ -523,7 +637,7 @@ impl AppState {
         let Some(editor) = &self.editor else {
             return Vec::new();
         };
-        related_picker_items_for(&self.items, editor.editing)
+        related_picker_items_for(&self.all_items, editor.editing)
             .into_iter()
             .filter(|item| fuzzy_matches_item(&editor.related_picker.query, item))
             .collect()
@@ -536,9 +650,9 @@ impl AppState {
         if editor.focus != 6 {
             return;
         }
-        editor.related_picker.selected = parse_related(&editor.fields[6], &self.items);
+        editor.related_picker.selected = parse_related(&editor.fields[6], &self.all_items);
         editor.related_picker.query.clear();
-        let items = related_picker_items_for(&self.items, editor.editing);
+        let items = related_picker_items_for(&self.all_items, editor.editing);
         if editor.related_picker.cursor >= items.len() {
             editor.related_picker.cursor = items.len().saturating_sub(1);
         }
@@ -587,7 +701,7 @@ impl AppState {
             KeyCode::Delete => editor.related_picker.query.clear(),
             _ => {}
         }
-        let max = related_picker_items_for(&self.items, editor.editing)
+        let max = related_picker_items_for(&self.all_items, editor.editing)
             .into_iter()
             .filter(|item| fuzzy_matches_item(&editor.related_picker.query, item))
             .count()
@@ -599,7 +713,7 @@ impl AppState {
         let Some(editor) = &mut self.editor else {
             return;
         };
-        editor.fields[6] = format_related(&editor.related_picker.selected, &self.items);
+        editor.fields[6] = format_related(&editor.related_picker.selected, &self.all_items);
         editor.cursors[6] = editor.fields[6].len();
         editor.related_cursor = editor
             .related_cursor
@@ -615,7 +729,7 @@ impl AppState {
         if editor.focus != 6 {
             return;
         }
-        let related = parse_related(&editor.fields[6], &self.items);
+        let related = parse_related(&editor.fields[6], &self.all_items);
         let Some(id) = related.get(editor.related_cursor).copied() else {
             self.open_related_picker();
             return;
@@ -631,7 +745,7 @@ impl AppState {
         if editor.focus != 6 {
             return None;
         }
-        parse_related(&editor.fields[6], &self.items)
+        parse_related(&editor.fields[6], &self.all_items)
             .get(editor.related_cursor)
             .copied()
     }
@@ -640,9 +754,9 @@ impl AppState {
         let Some(editor) = &mut self.editor else {
             return;
         };
-        let mut related = parse_related(&editor.fields[6], &self.items);
+        let mut related = parse_related(&editor.fields[6], &self.all_items);
         related.retain(|related_id| *related_id != id);
-        editor.fields[6] = format_related(&related, &self.items);
+        editor.fields[6] = format_related(&related, &self.all_items);
         editor.cursors[6] = editor.fields[6].len();
         editor.related_cursor = editor.related_cursor.min(related.len().saturating_sub(1));
         mark_editor_dirty(editor);
@@ -689,7 +803,7 @@ impl AppState {
             .map(ToOwned::to_owned)
             .collect();
         equation.variables = parse_variables(&editor.fields[5]);
-        equation.related = parse_related(&editor.fields[6], &self.items);
+        equation.related = parse_related(&editor.fields[6], &self.all_items);
         equation.updated_at = nullspace_core::store::now_rfc3339();
         let saved_id = equation.id;
         if editor.editing.is_some() {
@@ -867,19 +981,6 @@ fn fuzzy_subsequence(needle: &str, haystack: &str) -> bool {
         }
     }
     false
-}
-
-fn terminal_graphics_detected() -> bool {
-    std::env::var_os("KITTY_WINDOW_ID").is_some()
-        || std::env::var_os("WEZTERM_PANE").is_some()
-        || std::env::var("TERM")
-            .map(|term| {
-                term.contains("kitty") || term.contains("wezterm") || term.contains("xterm-kitty")
-            })
-            .unwrap_or(false)
-        || std::env::var("TERM_PROGRAM")
-            .map(|program| program.contains("iTerm") || program.contains("Ghostty"))
-            .unwrap_or(false)
 }
 
 fn prev_boundary(value: &str, cursor: usize) -> usize {
