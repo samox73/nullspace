@@ -3,6 +3,8 @@
 A terminal app for building a personal library of LaTeX equations. Browse, search,
 and edit equations and see them rendered as real math inline in your terminal.
 
+https://github.com/user-attachments/assets/4fb89555-f74a-410a-a634-12447759eaf9
+
 ## Requirements
 
 - A recent Rust toolchain (`cargo`).
