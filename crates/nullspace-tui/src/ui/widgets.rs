@@ -240,9 +240,9 @@ fn centered_image_area(protocol: &ratatui_image::protocol::StatefulProtocol, are
 pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let help = match app.mode {
         Mode::Browser => {
-            "j/k move  / search  enter edit  +/- zoom  n new  c clone  y copy latex  d delete  q quit"
+            "j/k move  / search  enter edit  +/- zoom  v layout  n new  c clone  y copy latex  d delete  q quit"
         }
-        Mode::Search => "tag: var: name: latex: related:  enter apply  esc clear",
+        Mode::Search => "tab focus  j/k move list  enter apply  esc clear",
         Mode::Editor => "tab field  esc back",
         Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
         Mode::ReferenceEditor => "tab/shift-tab field  enter save  esc cancel",

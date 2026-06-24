@@ -31,6 +31,10 @@ const PROTOCOL_RESULTS_PER_TICK: usize = 16;
 const WARM_RESULTS_PER_TICK: usize = 3;
 const RENDER_RESULTS_PER_TICK: usize = 2;
 const RESULT_TICK_BUDGET: Duration = Duration::from_millis(4);
+const MIN_RENDER_PX: u32 = 16;
+const MAX_RENDER_PX: u32 = 512;
+const APPROX_TERMINAL_CELL_PX_HEIGHT: u32 = 20;
+const PREVIEW_RENDER_EDGE_GUARD_PX: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -48,6 +52,12 @@ pub enum Mode {
 pub enum Pane {
     List,
     Preview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutOrientation {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Clone)]
@@ -144,6 +154,12 @@ pub enum BrowserFilter {
     Search(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserFilterFocus {
+    Search,
+    List,
+}
+
 pub struct AppState {
     pub store: Store,
     pub mode: Mode,
@@ -151,10 +167,12 @@ pub struct AppState {
     pub items: Vec<EquationSummary>,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
+    pub browser_filter_focus: BrowserFilterFocus,
     pub cursor: usize,
     pub list_scroll_offset: usize,
     pub list_visible_height: u16,
     pub focus: Pane,
+    pub layout: LayoutOrientation,
     pub should_quit: bool,
     pub graphics_ok: bool,
     pub status: String,
@@ -164,6 +182,7 @@ pub struct AppState {
     pub preview_error: Option<String>,
     pub preview_latex: String,
     pub preview_px: u32,
+    pub preview_render_px: u32,
     pub preview_preserve_on_error: bool,
     pub notification: Option<Notification>,
     editor_history: Vec<EditorState>,
@@ -215,10 +234,12 @@ impl AppState {
             items: Vec::new(),
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
+            browser_filter_focus: BrowserFilterFocus::Search,
             cursor: 0,
             list_scroll_offset: 0,
             list_visible_height: 0,
             focus: Pane::List,
+            layout: LayoutOrientation::Horizontal,
             should_quit: false,
             graphics_ok,
             status: "Ready".to_string(),
@@ -228,6 +249,7 @@ impl AppState {
             preview_error: None,
             preview_latex: String::new(),
             preview_px: 160,
+            preview_render_px: 160,
             preview_preserve_on_error: false,
             notification: None,
             editor_history: Vec::new(),
@@ -289,6 +311,13 @@ impl AppState {
             return;
         }
         self.preview_warm_size = Some(size);
+        if !self.preview_latex.is_empty()
+            && effective_render_px(self.preview_px, self.preview_warm_size)
+                != self.preview_render_px
+        {
+            self.schedule_latex_inner(self.preview_latex.clone(), self.preview_px, true);
+            return;
+        }
         // The size only becomes known once the preview pane is first drawn. If the current
         // equation is sitting on a spinner with its image already decoded, kick off its
         // (async) encode now that we know the target size.
@@ -303,7 +332,7 @@ impl AppState {
     }
 
     pub fn cache_status_for(&self, latex: &str, px: u32) -> CacheStatus {
-        let key = render_cache::key(latex, px);
+        let key = render_cache::key(latex, self.effective_render_px(px));
         if self.warm_inflight.contains(&key)
             || self.protocol_warm_inflight.contains(&key)
             || self.render_inflight_key == Some(key)
@@ -344,6 +373,7 @@ impl AppState {
     fn clear_browser_filter(&mut self) -> anyhow::Result<()> {
         self.browser_filter = BrowserFilter::None;
         self.browser_filter_cursor = 0;
+        self.browser_filter_focus = BrowserFilterFocus::Search;
         self.refresh_items()?;
         self.status = "Filter cleared".to_string();
         self.schedule_selected();
@@ -433,6 +463,13 @@ impl AppState {
                 self.focus = Pane::Preview;
                 Ok(())
             }
+            Action::ToggleLayout => {
+                self.layout = match self.layout {
+                    LayoutOrientation::Horizontal => LayoutOrientation::Vertical,
+                    LayoutOrientation::Vertical => LayoutOrientation::Horizontal,
+                };
+                Ok(())
+            }
             Action::NewEquation => {
                 self.editor_history.clear();
                 self.open_editor(None);
@@ -449,6 +486,7 @@ impl AppState {
             Action::StartSearch => {
                 self.browser_filter = BrowserFilter::Search(String::new());
                 self.browser_filter_cursor = 0;
+                self.browser_filter_focus = BrowserFilterFocus::Search;
                 self.mode = Mode::Search;
                 self.refresh_items()?;
                 self.status = "Search".to_string();
@@ -466,6 +504,13 @@ impl AppState {
             Action::BrowserFilterCancel | Action::ClearFilter => {
                 self.clear_browser_filter()?;
                 self.mode = Mode::Browser;
+                Ok(())
+            }
+            Action::BrowserFilterToggleFocus => {
+                self.browser_filter_focus = match self.browser_filter_focus {
+                    BrowserFilterFocus::Search => BrowserFilterFocus::List,
+                    BrowserFilterFocus::List => BrowserFilterFocus::Search,
+                };
                 Ok(())
             }
             Action::ConfirmYes => {
@@ -701,10 +746,12 @@ impl AppState {
             self.worker.send(RenderJob {
                 generation: self.generation,
                 latex: self.preview_latex.clone(),
-                px: self.preview_px,
+                px: self.preview_render_px,
             });
-            self.render_inflight_key =
-                Some(render_cache::key(&self.preview_latex, self.preview_px));
+            self.render_inflight_key = Some(render_cache::key(
+                &self.preview_latex,
+                self.preview_render_px,
+            ));
             self.dispatched_generation = self.generation;
         }
 
@@ -966,9 +1013,14 @@ impl AppState {
         self.schedule_latex_inner(latex, px, true);
     }
 
+    fn effective_render_px(&self, preferred_px: u32) -> u32 {
+        effective_render_px(preferred_px, self.preview_warm_size)
+    }
+
     fn schedule_latex_inner(&mut self, latex: String, px: u32, immediate: bool) {
         self.preview_latex = latex;
         self.preview_px = px;
+        self.preview_render_px = self.effective_render_px(px);
         self.preview_preserve_on_error = matches!(
             self.mode,
             Mode::Editor
@@ -979,7 +1031,7 @@ impl AppState {
         );
         self.generation = self.generation.saturating_add(1);
         self.last_change = Instant::now();
-        let new_key = render_cache::key(&self.preview_latex, self.preview_px);
+        let new_key = render_cache::key(&self.preview_latex, self.preview_render_px);
 
         if new_key != self.preview_cache_key {
             // Switching to a different equation: stash the current encoded protocol so
@@ -1028,7 +1080,7 @@ impl AppState {
 
         // Single selection: a one-off disk decode is acceptable to get the image into the
         // cache promptly. The encode still happens off-thread.
-        if let Some(raw) = render_cache::load(&self.preview_latex, self.preview_px) {
+        if let Some(raw) = render_cache::load(&self.preview_latex, self.preview_render_px) {
             let display = self.graphics.recolor(raw);
             self.remember_cache(new_key, display.clone());
             if self.queue_current_protocol_warm(new_key, display) {
@@ -1059,7 +1111,8 @@ impl AppState {
                 let Some(item) = self.items.get(index) else {
                     continue;
                 };
-                let key = render_cache::key(&item.latex, item.px_height);
+                let item_px = self.effective_render_px(item.px_height);
+                let key = render_cache::key(&item.latex, item_px);
                 if !seen.insert(key)
                     || self.warm_inflight.contains(&key)
                     || self.warm_failed.contains(&key)
@@ -1082,7 +1135,7 @@ impl AppState {
                 // Not rendered yet — render it off-thread.
                 jobs.push(WarmJob {
                     latex: item.latex.clone(),
-                    px: item.px_height,
+                    px: item_px,
                 });
                 self.warm_inflight.insert(key);
             }
@@ -2033,6 +2086,18 @@ fn fuzzy_matches_item(query: &str, item: &EquationSummary) -> bool {
     item.name.to_lowercase().contains(&needle) || item.latex.to_lowercase().contains(&needle)
 }
 
+fn effective_render_px(preferred_px: u32, preview_size: Option<Size>) -> u32 {
+    let preferred_px = preferred_px.clamp(MIN_RENDER_PX, MAX_RENDER_PX);
+    let Some(size) = preview_size else {
+        return preferred_px;
+    };
+    let pane_px = u32::from(size.height)
+        .saturating_mul(APPROX_TERMINAL_CELL_PX_HEIGHT)
+        .saturating_sub(PREVIEW_RENDER_EDGE_GUARD_PX)
+        .clamp(MIN_RENDER_PX, MAX_RENDER_PX);
+    preferred_px.min(pane_px)
+}
+
 fn warm_result_key(result: &WarmResult) -> Option<u64> {
     match &result.outcome {
         WarmOutcome::Ready { latex, px, .. } => Some(render_cache::key(latex, *px)),
@@ -2075,8 +2140,11 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{fuzzy_matches_item, textarea_from_text, textarea_lines, textarea_text};
+    use super::{
+        effective_render_px, fuzzy_matches_item, textarea_from_text, textarea_lines, textarea_text,
+    };
     use nullspace_core::{EquationId, EquationSummary};
+    use ratatui::layout::Size;
 
     #[test]
     fn textarea_round_trips_multiline_text() {
@@ -2111,5 +2179,25 @@ mod tests {
 
         assert!(!fuzzy_matches_item("Debye", &description_only));
         assert!(fuzzy_matches_item("Debye", &actual_match));
+    }
+
+    #[test]
+    fn effective_render_px_caps_to_preview_height() {
+        let size = Some(Size {
+            width: 80,
+            height: 5,
+        });
+
+        assert_eq!(effective_render_px(512, size), 98);
+    }
+
+    #[test]
+    fn effective_render_px_does_not_upscale_small_equations() {
+        let size = Some(Size {
+            width: 80,
+            height: 20,
+        });
+
+        assert_eq!(effective_render_px(48, size), 48);
     }
 }

@@ -39,20 +39,17 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(frame.area());
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(outer[0]);
+    let (form_area, preview_area) = crate::ui::content_panes(outer[0], app.layout);
 
     let row_constraints = app
         .editor
         .as_ref()
-        .map(|editor| editor_row_constraints(editor, panes[0].width))
+        .map(|editor| editor_row_constraints(editor, form_area.width))
         .unwrap_or_else(default_row_constraints);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(row_constraints)
-        .split(panes[0]);
+        .split(form_area);
 
     let current_latex = app.editor.as_ref().map(|editor| editor.field_text(2));
     let latex_invalid = current_latex
@@ -117,7 +114,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         }
     }
     if !matches!(app.mode, Mode::RelatedPicker) {
-        widgets::preview_pane(frame, panes[1], app, "Live preview");
+        widgets::preview_pane(frame, preview_area, app, "Live preview");
     }
     if matches!(app.mode, Mode::RelatedPicker) {
         draw_related_picker(frame, app);

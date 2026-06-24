@@ -1,12 +1,12 @@
 use crate::action::Action;
-use crate::app::Mode;
+use crate::app::{AppState, BrowserFilterFocus, Mode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
+pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Action::Quit;
     }
-    match mode {
+    match app.mode {
         Mode::Browser => match key.code {
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Char('/') => Action::StartSearch,
@@ -15,6 +15,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
             KeyCode::Char('h') => Action::FocusLeft,
             KeyCode::Char('l') => Action::FocusRight,
+            KeyCode::Char('v') => Action::ToggleLayout,
             KeyCode::Char('n') => Action::NewEquation,
             KeyCode::Char('c') => Action::CopyCurrent,
             KeyCode::Char('y') => Action::CopyLatexToClipboard,
@@ -26,7 +27,18 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         },
         Mode::Search => match key.code {
             KeyCode::Esc => Action::BrowserFilterCancel,
+            KeyCode::Tab | KeyCode::BackTab => Action::BrowserFilterToggleFocus,
             KeyCode::Enter => Action::BrowserFilterAccept,
+            KeyCode::Char('j') | KeyCode::Down
+                if app.browser_filter_focus == BrowserFilterFocus::List =>
+            {
+                Action::MoveDown
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if app.browser_filter_focus == BrowserFilterFocus::List =>
+            {
+                Action::MoveUp
+            }
             KeyCode::Backspace
             | KeyCode::Delete
             | KeyCode::Left

@@ -150,7 +150,7 @@ fn run(
         terminal.draw(|frame| ui::draw(frame, app))?;
         if ct_event::poll(Duration::from_millis(50))? {
             if let ct_event::Event::Key(key) = ct_event::read()? {
-                let action = event::map_key(key, &app.mode);
+                let action = event::map_key(key, app);
                 app.apply(action);
             }
         }

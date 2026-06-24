@@ -47,6 +47,7 @@ make demo
 | `d` | Delete the selected equation |
 | `/` | Search |
 | `+` / `-` | Zoom the preview in / out |
+| `v` | Toggle horizontal / vertical pane layout |
 | `Esc` | Clear the active filter |
 | `q` / `Ctrl-C` | Quit |
 
