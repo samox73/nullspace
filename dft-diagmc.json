@@ -1,0 +1,927 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-00000000d001",
+    "name": "Many-body Schrödinger equation",
+    "description": "Stationary Schrödinger equation for the N-electron wavefunction; the exact problem DFT and many-body methods approximate.",
+    "latex": "\\hat{H}\\,\\Psi(\\mathbf{r}_1,\\dots,\\mathbf{r}_N) = E\\,\\Psi(\\mathbf{r}_1,\\dots,\\mathbf{r}_N)",
+    "references": [],
+    "tags": ["dft", "foundations", "many-body"],
+    "variables": [
+      { "symbol": "\\hat{H}", "description": "many-electron Hamiltonian" },
+      { "symbol": "\\Psi", "description": "N-electron wavefunction" },
+      { "symbol": "E", "description": "total electronic energy (eigenvalue)" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d002"],
+    "px_height": 110,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d002",
+    "name": "Electronic many-body Hamiltonian",
+    "description": "Kinetic energy, external (nuclear) potential, and electron-electron Coulomb repulsion in the Born-Oppenheimer approximation.",
+    "latex": "\\hat{H} = -\\frac{\\hbar^2}{2m}\\sum_i \\nabla_i^2 + \\sum_i v_{\\text{ext}}(\\mathbf{r}_i) + \\frac{1}{2}\\sum_{i\\neq j}\\frac{e^2}{|\\mathbf{r}_i-\\mathbf{r}_j|}",
+    "references": [],
+    "tags": ["dft", "foundations", "many-body"],
+    "variables": [
+      { "symbol": "v_{\\text{ext}}", "description": "external potential (nuclei)" },
+      { "symbol": "\\nabla_i^2", "description": "Laplacian for electron i" },
+      { "symbol": "e^2/|\\mathbf{r}_i-\\mathbf{r}_j|", "description": "electron-electron Coulomb repulsion" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d001", "00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000b022"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d003",
+    "name": "Electron density",
+    "description": "The central variable of DFT: probability density of finding any one of N electrons at r, obtained by integrating out all other coordinates.",
+    "latex": "n(\\mathbf{r}) = N\\int |\\Psi(\\mathbf{r},\\mathbf{r}_2,\\dots,\\mathbf{r}_N)|^2\\, d\\mathbf{r}_2\\cdots d\\mathbf{r}_N",
+    "references": [],
+    "tags": ["dft", "foundations"],
+    "variables": [
+      { "symbol": "n(\\mathbf{r})", "description": "electron number density" },
+      { "symbol": "N", "description": "number of electrons" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d005", "00000000-0000-4000-8000-00000000d010"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d004",
+    "name": "Hohenberg-Kohn variational principle",
+    "description": "Second Hohenberg-Kohn theorem: the exact energy functional is minimized by the true ground-state density and equals the ground-state energy there.",
+    "latex": "E_0 = \\min_{n}\\, E[n], \\qquad E[n] \\geq E_0",
+    "references": [
+      { "text": "Hohenberg & Kohn, Phys. Rev. 136, B864 (1964)", "url": "https://doi.org/10.1103/PhysRev.136.B864" }
+    ],
+    "tags": ["dft", "foundations", "hohenberg-kohn"],
+    "variables": [
+      { "symbol": "E[n]", "description": "energy density functional" },
+      { "symbol": "E_0", "description": "ground-state energy" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d005", "00000000-0000-4000-8000-00000000d006", "00000000-0000-4000-8000-00000000d007"],
+    "px_height": 110,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d005",
+    "name": "Hohenberg-Kohn energy functional",
+    "description": "Total energy split into the system-independent universal functional plus the coupling to the external potential.",
+    "latex": "E[n] = F[n] + \\int v_{\\text{ext}}(\\mathbf{r})\\, n(\\mathbf{r})\\, d\\mathbf{r}",
+    "references": [
+      { "text": "Hohenberg & Kohn, Phys. Rev. 136, B864 (1964)", "url": "https://doi.org/10.1103/PhysRev.136.B864" }
+    ],
+    "tags": ["dft", "foundations", "hohenberg-kohn"],
+    "variables": [
+      { "symbol": "F[n]", "description": "universal Hohenberg-Kohn functional" },
+      { "symbol": "v_{\\text{ext}}", "description": "external potential" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d004", "00000000-0000-4000-8000-00000000d006", "00000000-0000-4000-8000-00000000d003", "00000000-0000-4000-8000-00000000d014"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d006",
+    "name": "Universal density functional",
+    "description": "Kinetic plus electron-electron interaction energy as a functional of density alone — universal because it does not depend on the external potential.",
+    "latex": "F[n] = T[n] + V_{ee}[n]",
+    "references": [],
+    "tags": ["dft", "foundations", "hohenberg-kohn"],
+    "variables": [
+      { "symbol": "T[n]", "description": "kinetic-energy functional" },
+      { "symbol": "V_{ee}[n]", "description": "electron-electron interaction functional" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d004", "00000000-0000-4000-8000-00000000d005", "00000000-0000-4000-8000-00000000d007", "00000000-0000-4000-8000-00000000d020"],
+    "px_height": 100,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d007",
+    "name": "Levy constrained-search functional",
+    "description": "Constructive definition of the universal functional as a minimization over all wavefunctions yielding a given density, generalizing HK to degenerate/non-v-representable cases.",
+    "latex": "F[n] = \\min_{\\Psi \\to n}\\, \\langle \\Psi |\\, \\hat{T} + \\hat{V}_{ee}\\, | \\Psi \\rangle",
+    "references": [
+      { "text": "Levy, PNAS 76, 6062 (1979)", "url": "https://doi.org/10.1073/pnas.76.12.6062" }
+    ],
+    "tags": ["dft", "foundations"],
+    "variables": [
+      { "symbol": "\\Psi \\to n", "description": "wavefunctions integrating to density n" },
+      { "symbol": "\\hat{T}", "description": "kinetic-energy operator" },
+      { "symbol": "\\hat{V}_{ee}", "description": "electron-electron interaction operator" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d004", "00000000-0000-4000-8000-00000000d006"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d008",
+    "name": "Kohn-Sham equations",
+    "description": "Single-particle equations for fictitious non-interacting electrons in an effective potential that reproduce the exact interacting density. The workhorse of practical DFT.",
+    "latex": "\\left( -\\frac{\\hbar^2}{2m}\\nabla^2 + v_{\\text{eff}}(\\mathbf{r}) \\right)\\psi_i(\\mathbf{r}) = \\varepsilon_i\\, \\psi_i(\\mathbf{r})",
+    "references": [
+      { "text": "Kohn & Sham, Phys. Rev. 140, A1133 (1965)", "url": "https://doi.org/10.1103/PhysRev.140.A1133" }
+    ],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "\\psi_i", "description": "Kohn-Sham orbital i" },
+      { "symbol": "\\varepsilon_i", "description": "Kohn-Sham eigenvalue" },
+      { "symbol": "v_{\\text{eff}}", "description": "effective single-particle potential" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d002", "00000000-0000-4000-8000-00000000d009", "00000000-0000-4000-8000-00000000d010", "00000000-0000-4000-8000-00000000d014", "00000000-0000-4000-8000-00000000d025"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d009",
+    "name": "Kohn-Sham effective potential",
+    "description": "Sum of external, Hartree, and exchange-correlation potentials; depends on the density and so must be solved self-consistently.",
+    "latex": "v_{\\text{eff}}(\\mathbf{r}) = v_{\\text{ext}}(\\mathbf{r}) + v_{H}(\\mathbf{r}) + v_{xc}(\\mathbf{r})",
+    "references": [
+      { "text": "Kohn & Sham, Phys. Rev. 140, A1133 (1965)", "url": "https://doi.org/10.1103/PhysRev.140.A1133" }
+    ],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "v_{H}", "description": "Hartree (classical Coulomb) potential" },
+      { "symbol": "v_{xc}", "description": "exchange-correlation potential" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000d011", "00000000-0000-4000-8000-00000000d013"],
+    "px_height": 110,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d010",
+    "name": "Kohn-Sham density",
+    "description": "The interacting density reconstructed from occupied Kohn-Sham orbitals with occupation numbers f_i.",
+    "latex": "n(\\mathbf{r}) = \\sum_{i=1}^{N} f_i\\, |\\psi_i(\\mathbf{r})|^2",
+    "references": [],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "f_i", "description": "orbital occupation number" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000d003", "00000000-0000-4000-8000-00000000d015"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d011",
+    "name": "Hartree potential",
+    "description": "Classical electrostatic potential of the electron density; the mean-field part of the electron-electron interaction.",
+    "latex": "v_{H}(\\mathbf{r}) = e^2\\int \\frac{n(\\mathbf{r}')}{|\\mathbf{r}-\\mathbf{r}'|}\\, d\\mathbf{r}'",
+    "references": [],
+    "tags": ["dft", "kohn-sham", "hartree"],
+    "variables": [
+      { "symbol": "v_{H}", "description": "Hartree potential" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d009", "00000000-0000-4000-8000-00000000d012"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d012",
+    "name": "Hartree energy",
+    "description": "Classical Coulomb self-energy of the electron density (contains a spurious self-interaction cancelled by exchange).",
+    "latex": "E_{H}[n] = \\frac{e^2}{2}\\int\\!\\int \\frac{n(\\mathbf{r})\\,n(\\mathbf{r}')}{|\\mathbf{r}-\\mathbf{r}'|}\\, d\\mathbf{r}\\, d\\mathbf{r}'",
+    "references": [],
+    "tags": ["dft", "hartree"],
+    "variables": [
+      { "symbol": "E_{H}[n]", "description": "Hartree energy" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d011", "00000000-0000-4000-8000-00000000d014"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d013",
+    "name": "Exchange-correlation potential",
+    "description": "Functional derivative of the exchange-correlation energy; the single term that must be approximated in Kohn-Sham DFT.",
+    "latex": "v_{xc}(\\mathbf{r}) = \\frac{\\delta E_{xc}[n]}{\\delta n(\\mathbf{r})}",
+    "references": [],
+    "tags": ["dft", "exchange-correlation"],
+    "variables": [
+      { "symbol": "E_{xc}[n]", "description": "exchange-correlation energy functional" },
+      { "symbol": "\\delta/\\delta n", "description": "functional derivative w.r.t. density" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d009", "00000000-0000-4000-8000-00000000d017", "00000000-0000-4000-8000-00000000d019", "00000000-0000-4000-8000-00000000d023", "00000000-0000-4000-8000-00000000b025"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d014",
+    "name": "Kohn-Sham total-energy functional",
+    "description": "Exact total-energy decomposition: non-interacting kinetic energy, external, Hartree, and exchange-correlation contributions.",
+    "latex": "E[n] = T_s[n] + \\int v_{\\text{ext}}(\\mathbf{r})\\, n(\\mathbf{r})\\, d\\mathbf{r} + E_{H}[n] + E_{xc}[n]",
+    "references": [
+      { "text": "Kohn & Sham, Phys. Rev. 140, A1133 (1965)", "url": "https://doi.org/10.1103/PhysRev.140.A1133" }
+    ],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "T_s[n]", "description": "non-interacting kinetic energy" },
+      { "symbol": "E_{xc}[n]", "description": "exchange-correlation energy" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000d005", "00000000-0000-4000-8000-00000000d015", "00000000-0000-4000-8000-00000000d016", "00000000-0000-4000-8000-00000000d012"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d015",
+    "name": "Kohn-Sham kinetic energy",
+    "description": "Kinetic energy of the non-interacting reference system, evaluated exactly from the Kohn-Sham orbitals.",
+    "latex": "T_s[n] = -\\frac{\\hbar^2}{2m}\\sum_{i=1}^{N} f_i \\int \\psi_i^*(\\mathbf{r})\\, \\nabla^2 \\psi_i(\\mathbf{r})\\, d\\mathbf{r}",
+    "references": [],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "T_s[n]", "description": "non-interacting kinetic-energy functional" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d010", "00000000-0000-4000-8000-00000000d014", "00000000-0000-4000-8000-00000000d020"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d016",
+    "name": "Total energy from KS eigenvalues",
+    "description": "Total energy expressed via the band-energy sum with the double-counting corrections for Hartree and exchange-correlation removed.",
+    "latex": "E = \\sum_i f_i\\,\\varepsilon_i - E_{H}[n] + E_{xc}[n] - \\int v_{xc}(\\mathbf{r})\\, n(\\mathbf{r})\\, d\\mathbf{r}",
+    "references": [],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "\\sum_i f_i\\varepsilon_i", "description": "sum of occupied KS eigenvalues (band energy)" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d014", "00000000-0000-4000-8000-00000000d024"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d017",
+    "name": "LDA exchange-correlation energy",
+    "description": "Local density approximation: at each point the XC energy density equals that of the homogeneous electron gas at the local density.",
+    "latex": "E_{xc}^{\\text{LDA}}[n] = \\int n(\\mathbf{r})\\, \\varepsilon_{xc}\\big(n(\\mathbf{r})\\big)\\, d\\mathbf{r}",
+    "references": [],
+    "tags": ["dft", "exchange-correlation", "lda"],
+    "variables": [
+      { "symbol": "\\varepsilon_{xc}(n)", "description": "XC energy per electron of the uniform gas" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d013", "00000000-0000-4000-8000-00000000d018", "00000000-0000-4000-8000-00000000d019"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d018",
+    "name": "LDA exchange energy (Dirac-Slater)",
+    "description": "Exact exchange energy of the homogeneous electron gas; the exchange part of the LDA.",
+    "latex": "E_{x}^{\\text{LDA}}[n] = -\\frac{3}{4}\\left(\\frac{3}{\\pi}\\right)^{1/3}\\!\\int n(\\mathbf{r})^{4/3}\\, d\\mathbf{r}",
+    "references": [],
+    "tags": ["dft", "exchange-correlation", "lda"],
+    "variables": [
+      { "symbol": "E_{x}^{\\text{LDA}}", "description": "LDA exchange energy" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d017", "00000000-0000-4000-8000-00000000d021"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d019",
+    "name": "GGA exchange-correlation energy",
+    "description": "Generalized gradient approximation: XC energy depends on both the density and its gradient (e.g. PBE, BLYP).",
+    "latex": "E_{xc}^{\\text{GGA}}[n] = \\int f\\big(n(\\mathbf{r}),\\, \\nabla n(\\mathbf{r})\\big)\\, d\\mathbf{r}",
+    "references": [],
+    "tags": ["dft", "exchange-correlation", "gga"],
+    "variables": [
+      { "symbol": "\\nabla n", "description": "density gradient" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d017", "00000000-0000-4000-8000-00000000d026", "00000000-0000-4000-8000-00000000d013"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d020",
+    "name": "Thomas-Fermi kinetic functional",
+    "description": "Explicit density functional for the kinetic energy of the uniform electron gas; the historical precursor of DFT.",
+    "latex": "T_{\\text{TF}}[n] = \\frac{3}{10}\\,(3\\pi^2)^{2/3}\\!\\int n(\\mathbf{r})^{5/3}\\, d\\mathbf{r}",
+    "references": [],
+    "tags": ["dft", "foundations", "thomas-fermi"],
+    "variables": [
+      { "symbol": "T_{\\text{TF}}[n]", "description": "Thomas-Fermi kinetic energy" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d006", "00000000-0000-4000-8000-00000000d015"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d021",
+    "name": "Wigner-Seitz radius",
+    "description": "Radius of the sphere containing one electron on average; the natural density parameter (r_s) of the homogeneous electron gas.",
+    "latex": "\\frac{4}{3}\\pi r_s^3 = \\frac{1}{n}",
+    "references": [],
+    "tags": ["dft", "electron-gas"],
+    "variables": [
+      { "symbol": "r_s", "description": "Wigner-Seitz / density parameter" },
+      { "symbol": "n", "description": "uniform electron density" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d018"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d022",
+    "name": "Spin density decomposition",
+    "description": "Total density as the sum of spin-up and spin-down densities; basis of spin-DFT (LSDA) for magnetic and open-shell systems.",
+    "latex": "n(\\mathbf{r}) = n_{\\uparrow}(\\mathbf{r}) + n_{\\downarrow}(\\mathbf{r})",
+    "references": [],
+    "tags": ["dft", "spin"],
+    "variables": [
+      { "symbol": "n_{\\uparrow}", "description": "spin-up density" },
+      { "symbol": "n_{\\downarrow}", "description": "spin-down density" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d010"],
+    "px_height": 110,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d023",
+    "name": "Adiabatic-connection formula",
+    "description": "Exact expression for the exchange-correlation energy as a coupling-constant integral linking the non-interacting and fully interacting systems.",
+    "latex": "E_{xc}[n] = \\int_0^1 d\\lambda\\, \\langle \\Psi_\\lambda |\\, \\hat{V}_{ee}\\, | \\Psi_\\lambda \\rangle - E_{H}[n]",
+    "references": [],
+    "tags": ["dft", "exchange-correlation", "foundations"],
+    "variables": [
+      { "symbol": "\\lambda", "description": "interaction coupling constant (0 to 1)" },
+      { "symbol": "\\Psi_\\lambda", "description": "ground state at coupling λ with fixed density" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d013"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d024",
+    "name": "Janak's theorem",
+    "description": "The Kohn-Sham eigenvalue is the derivative of the total energy with respect to the occupation of that orbital.",
+    "latex": "\\varepsilon_i = \\frac{\\partial E}{\\partial f_i}",
+    "references": [],
+    "tags": ["dft", "kohn-sham"],
+    "variables": [
+      { "symbol": "\\varepsilon_i", "description": "Kohn-Sham eigenvalue" },
+      { "symbol": "f_i", "description": "occupation of orbital i" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d016"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d025",
+    "name": "Hellmann-Feynman forces",
+    "description": "Forces on nuclei as the expectation value of the gradient of the Hamiltonian; basis of DFT geometry optimization and ab initio molecular dynamics.",
+    "latex": "\\mathbf{F}_I = -\\frac{\\partial E}{\\partial \\mathbf{R}_I} = -\\left\\langle \\Psi \\left| \\frac{\\partial \\hat{H}}{\\partial \\mathbf{R}_I} \\right| \\Psi \\right\\rangle",
+    "references": [],
+    "tags": ["dft", "forces", "dynamics"],
+    "variables": [
+      { "symbol": "\\mathbf{F}_I", "description": "force on nucleus I" },
+      { "symbol": "\\mathbf{R}_I", "description": "position of nucleus I" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d008"],
+    "px_height": 140,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d026",
+    "name": "Hybrid exchange-correlation functional",
+    "description": "Mixes a fraction of exact (Hartree-Fock) exchange with semilocal DFT exchange and correlation (e.g. B3LYP, PBE0).",
+    "latex": "E_{xc}^{\\text{hyb}} = \\alpha\\, E_{x}^{\\text{HF}} + (1-\\alpha)\\, E_{x}^{\\text{DFT}} + E_{c}^{\\text{DFT}}",
+    "references": [],
+    "tags": ["dft", "exchange-correlation", "hybrid"],
+    "variables": [
+      { "symbol": "\\alpha", "description": "fraction of exact exchange" },
+      { "symbol": "E_{x}^{\\text{HF}}", "description": "exact (Hartree-Fock) exchange" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d019", "00000000-0000-4000-8000-00000000d017"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d027",
+    "name": "Plane-wave expansion of KS orbitals",
+    "description": "Bloch orbitals expanded in plane waves on the reciprocal lattice; the standard basis for periodic-solid DFT codes.",
+    "latex": "\\psi_{n\\mathbf{k}}(\\mathbf{r}) = \\sum_{\\mathbf{G}} c_{n\\mathbf{k}}(\\mathbf{G})\\, e^{i(\\mathbf{k}+\\mathbf{G})\\cdot\\mathbf{r}}",
+    "references": [],
+    "tags": ["dft", "plane-waves", "solid-state"],
+    "variables": [
+      { "symbol": "\\mathbf{G}", "description": "reciprocal-lattice vector" },
+      { "symbol": "c_{n\\mathbf{k}}(\\mathbf{G})", "description": "plane-wave expansion coefficient" },
+      { "symbol": "\\mathbf{k}", "description": "crystal wavevector" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000d028"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000d028",
+    "name": "Plane-wave kinetic-energy cutoff",
+    "description": "Truncates the plane-wave basis by keeping only G-vectors below a kinetic-energy cutoff; the key convergence parameter of plane-wave DFT.",
+    "latex": "\\frac{\\hbar^2}{2m}\\,|\\mathbf{k}+\\mathbf{G}|^2 \\leq E_{\\text{cut}}",
+    "references": [],
+    "tags": ["dft", "plane-waves", "solid-state"],
+    "variables": [
+      { "symbol": "E_{\\text{cut}}", "description": "plane-wave kinetic-energy cutoff" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000d027"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b001",
+    "name": "Imaginary-time (Matsubara) Green's function",
+    "description": "Finite-temperature single-particle propagator; the central object sampled in diagrammatic Monte Carlo.",
+    "latex": "G(\\mathbf{r}\\tau, \\mathbf{r}'\\tau') = -\\langle \\mathcal{T}_\\tau\\, \\hat{\\psi}(\\mathbf{r},\\tau)\\, \\hat{\\psi}^\\dagger(\\mathbf{r}',\\tau') \\rangle",
+    "references": [],
+    "tags": ["diagmc", "many-body", "greens-function"],
+    "variables": [
+      { "symbol": "\\mathcal{T}_\\tau", "description": "imaginary-time ordering operator" },
+      { "symbol": "\\hat{\\psi}", "description": "field annihilation operator" },
+      { "symbol": "\\tau", "description": "imaginary time (0 to β)" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b006", "00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000b009"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b002",
+    "name": "Partition function",
+    "description": "Grand-canonical partition function; generating functional whose perturbative (diagrammatic) expansion underlies DiagMC.",
+    "latex": "Z = \\operatorname{Tr}\\, e^{-\\beta \\hat{H}}",
+    "references": [],
+    "tags": ["diagmc", "many-body", "statistical-mechanics"],
+    "variables": [
+      { "symbol": "\\beta", "description": "inverse temperature 1/(k_B T)" },
+      { "symbol": "\\operatorname{Tr}", "description": "trace over Fock space" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b003", "00000000-0000-4000-8000-00000000b014"],
+    "px_height": 100,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b003",
+    "name": "Thermal expectation value",
+    "description": "Equilibrium average of an observable; ratio of weighted trace to the partition function.",
+    "latex": "\\langle \\hat{O} \\rangle = \\frac{1}{Z}\\operatorname{Tr}\\!\\left( e^{-\\beta \\hat{H}}\\, \\hat{O} \\right)",
+    "references": [],
+    "tags": ["diagmc", "many-body", "statistical-mechanics"],
+    "variables": [
+      { "symbol": "\\hat{O}", "description": "observable operator" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b002"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b004",
+    "name": "Matsubara frequencies",
+    "description": "Discrete imaginary frequencies set by the (anti)periodicity of fields in imaginary time: odd multiples for fermions, even for bosons.",
+    "latex": "\\omega_n = \\frac{(2n+1)\\pi}{\\beta}, \\qquad \\nu_n = \\frac{2n\\pi}{\\beta}",
+    "references": [],
+    "tags": ["diagmc", "many-body", "matsubara"],
+    "variables": [
+      { "symbol": "\\omega_n", "description": "fermionic Matsubara frequency" },
+      { "symbol": "\\nu_n", "description": "bosonic Matsubara frequency" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b005", "00000000-0000-4000-8000-00000000b006"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b005",
+    "name": "Matsubara Fourier transform",
+    "description": "Relates imaginary-time and Matsubara-frequency representations of the Green's function.",
+    "latex": "G(\\tau) = \\frac{1}{\\beta}\\sum_{n} e^{-i\\omega_n \\tau}\\, G(i\\omega_n)",
+    "references": [],
+    "tags": ["diagmc", "many-body", "matsubara"],
+    "variables": [
+      { "symbol": "G(i\\omega_n)", "description": "Green's function in Matsubara frequency" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b004", "00000000-0000-4000-8000-00000000b001"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b006",
+    "name": "Non-interacting Green's function",
+    "description": "Bare propagator G0; building block of every Feynman diagram. ξ is the dispersion measured from the chemical potential.",
+    "latex": "G_0(\\mathbf{k}, i\\omega_n) = \\frac{1}{i\\omega_n - \\xi_{\\mathbf{k}}}, \\qquad \\xi_{\\mathbf{k}} = \\varepsilon_{\\mathbf{k}} - \\mu",
+    "references": [],
+    "tags": ["diagmc", "many-body", "greens-function"],
+    "variables": [
+      { "symbol": "\\xi_{\\mathbf{k}}", "description": "dispersion relative to chemical potential" },
+      { "symbol": "\\mu", "description": "chemical potential" },
+      { "symbol": "\\varepsilon_{\\mathbf{k}}", "description": "single-particle dispersion" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b001", "00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000b012", "00000000-0000-4000-8000-00000000b029"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b007",
+    "name": "Dyson equation (Green's function)",
+    "description": "Resums the full propagator from the bare one and the self-energy Σ, which collects all one-particle-irreducible diagrams.",
+    "latex": "G(\\mathbf{k}, i\\omega_n) = \\frac{1}{i\\omega_n - \\xi_{\\mathbf{k}} - \\Sigma(\\mathbf{k}, i\\omega_n)}",
+    "references": [],
+    "tags": ["diagmc", "many-body", "self-energy"],
+    "variables": [
+      { "symbol": "\\Sigma", "description": "self-energy (1PI insertions)" },
+      { "symbol": "G", "description": "full (dressed) Green's function" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b001", "00000000-0000-4000-8000-00000000b006", "00000000-0000-4000-8000-00000000b008", "00000000-0000-4000-8000-00000000b027", "00000000-0000-4000-8000-00000000b025"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b008",
+    "name": "Dyson equation (operator form)",
+    "description": "Geometric-series form of the Dyson equation; G = G0 + G0 Σ G iterated to all orders.",
+    "latex": "G = G_0 + G_0\\, \\Sigma\\, G",
+    "references": [],
+    "tags": ["diagmc", "many-body", "self-energy"],
+    "variables": [
+      { "symbol": "G_0", "description": "bare propagator" },
+      { "symbol": "\\Sigma", "description": "self-energy" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000b027"],
+    "px_height": 100,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b009",
+    "name": "Lehmann (spectral) representation",
+    "description": "Expresses the Green's function as a spectral integral over the spectral function A; the bridge between Matsubara data and real-frequency spectra.",
+    "latex": "G(\\mathbf{k}, i\\omega_n) = \\int_{-\\infty}^{\\infty} \\frac{A(\\mathbf{k}, \\omega)}{i\\omega_n - \\omega}\\, d\\omega",
+    "references": [],
+    "tags": ["diagmc", "many-body", "spectral"],
+    "variables": [
+      { "symbol": "A(\\mathbf{k}, \\omega)", "description": "single-particle spectral function" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b001", "00000000-0000-4000-8000-00000000b010", "00000000-0000-4000-8000-00000000b011"],
+    "px_height": 140,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b010",
+    "name": "Spectral function",
+    "description": "Imaginary part of the retarded Green's function; measured by photoemission and the target of analytic continuation in DiagMC.",
+    "latex": "A(\\mathbf{k}, \\omega) = -\\frac{1}{\\pi}\\,\\operatorname{Im} G^{R}(\\mathbf{k}, \\omega)",
+    "references": [],
+    "tags": ["diagmc", "many-body", "spectral"],
+    "variables": [
+      { "symbol": "G^{R}", "description": "retarded Green's function" },
+      { "symbol": "A", "description": "spectral function" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b009", "00000000-0000-4000-8000-00000000b011"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b011",
+    "name": "Analytic continuation",
+    "description": "Continuation from Matsubara frequencies to real frequencies; an ill-posed inverse problem central to extracting spectra from QMC/DiagMC data.",
+    "latex": "G^{R}(\\mathbf{k}, \\omega) = G(\\mathbf{k}, i\\omega_n \\to \\omega + i0^{+})",
+    "references": [],
+    "tags": ["diagmc", "many-body", "spectral"],
+    "variables": [
+      { "symbol": "i0^{+}", "description": "positive infinitesimal imaginary shift" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b009", "00000000-0000-4000-8000-00000000b010"],
+    "px_height": 110,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b012",
+    "name": "Fermi-Dirac and Bose-Einstein distributions",
+    "description": "Thermal occupation factors that appear when Matsubara sums are carried out by contour integration.",
+    "latex": "n_{F}(\\varepsilon) = \\frac{1}{e^{\\beta\\varepsilon} + 1}, \\qquad n_{B}(\\varepsilon) = \\frac{1}{e^{\\beta\\varepsilon} - 1}",
+    "references": [],
+    "tags": ["diagmc", "many-body", "statistical-mechanics"],
+    "variables": [
+      { "symbol": "n_{F}", "description": "Fermi-Dirac distribution" },
+      { "symbol": "n_{B}", "description": "Bose-Einstein distribution" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b006", "00000000-0000-4000-8000-00000000b029"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b013",
+    "name": "Coherent-state action",
+    "description": "Imaginary-time action in the fermionic coherent-state path integral; starting point for the perturbative diagram expansion.",
+    "latex": "S[\\bar\\psi, \\psi] = \\int_0^\\beta d\\tau \\left[ \\sum_{\\mathbf{k}} \\bar\\psi_{\\mathbf{k}}(\\tau)\\,(\\partial_\\tau + \\xi_{\\mathbf{k}})\\,\\psi_{\\mathbf{k}}(\\tau) + V(\\tau) \\right]",
+    "references": [],
+    "tags": ["diagmc", "many-body", "path-integral"],
+    "variables": [
+      { "symbol": "\\bar\\psi, \\psi", "description": "Grassmann (coherent-state) fields" },
+      { "symbol": "V(\\tau)", "description": "interaction term" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b014"],
+    "px_height": 140,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b014",
+    "name": "Perturbative expansion of the partition function",
+    "description": "Interaction-picture expansion of Z in powers of the interaction; each term, after Wick's theorem, becomes a sum of Feynman diagrams that DiagMC samples stochastically.",
+    "latex": "\\frac{Z}{Z_0} = \\sum_{n=0}^{\\infty} \\frac{(-1)^n}{n!}\\int_0^\\beta d\\tau_1 \\cdots d\\tau_n\\, \\langle \\mathcal{T}_\\tau\\, \\hat{V}(\\tau_1)\\cdots \\hat{V}(\\tau_n) \\rangle_0",
+    "references": [
+      { "text": "Prokof'ev & Svistunov, Phys. Rev. Lett. 81, 2514 (1998)", "url": "https://doi.org/10.1103/PhysRevLett.81.2514" }
+    ],
+    "tags": ["diagmc", "many-body", "perturbation"],
+    "variables": [
+      { "symbol": "\\hat{V}(\\tau)", "description": "interaction in the interaction picture" },
+      { "symbol": "\\langle\\cdots\\rangle_0", "description": "average in the non-interacting ensemble" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b002", "00000000-0000-4000-8000-00000000b013", "00000000-0000-4000-8000-00000000b015", "00000000-0000-4000-8000-00000000b016"],
+    "px_height": 150,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b015",
+    "name": "Wick's theorem (determinant form)",
+    "description": "For non-interacting ensembles, time-ordered averages factor into all pairwise contractions; for fermions the sum of signed pairings is a determinant of bare propagators (used in determinantal DiagMC / CDet).",
+    "latex": "\\langle \\mathcal{T}_\\tau\\, \\hat\\psi_1 \\cdots \\hat\\psi_n\\, \\hat\\psi_n^\\dagger \\cdots \\hat\\psi_1^\\dagger \\rangle_0 = \\det\\!\\big[\\, G_0(i,j)\\, \\big]_{i,j=1}^{n}",
+    "references": [],
+    "tags": ["diagmc", "many-body", "wick"],
+    "variables": [
+      { "symbol": "G_0(i,j)", "description": "bare propagator between vertices i and j" },
+      { "symbol": "\\det", "description": "determinant over contraction pairs" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b014", "00000000-0000-4000-8000-00000000b017"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b016",
+    "name": "Linked-cluster theorem",
+    "description": "The logarithm of Z (and the Green's function) is a sum of connected diagrams only; disconnected pieces cancel, making the diagrammatic series well-defined in the thermodynamic limit.",
+    "latex": "\\ln\\frac{Z}{Z_0} = \\sum_{\\text{connected}} D_\\nu",
+    "references": [],
+    "tags": ["diagmc", "many-body", "perturbation"],
+    "variables": [
+      { "symbol": "D_\\nu", "description": "value of connected diagram ν" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b014", "00000000-0000-4000-8000-00000000b017"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b017",
+    "name": "Feynman diagram weight",
+    "description": "Value of a diagram configuration: product of bare propagators and interaction lines with the fermion-loop sign. This is the integrand DiagMC samples over order, topology, and internal variables.",
+    "latex": "D_\\nu = (-1)^{n_L} \\prod_{i} G_0(\\mathbf{k}_i, i\\omega_i)\\, \\prod_{j} \\big[-V(\\mathbf{q}_j)\\big]",
+    "references": [
+      { "text": "Prokof'ev & Svistunov, Phys. Rev. Lett. 81, 2514 (1998)", "url": "https://doi.org/10.1103/PhysRevLett.81.2514" }
+    ],
+    "tags": ["diagmc", "many-body", "monte-carlo"],
+    "variables": [
+      { "symbol": "n_L", "description": "number of closed fermion loops" },
+      { "symbol": "V(\\mathbf{q})", "description": "interaction (vertex) line" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b015", "00000000-0000-4000-8000-00000000b016", "00000000-0000-4000-8000-00000000b018"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b018",
+    "name": "Monte Carlo estimator",
+    "description": "Diagrammatic observable as an importance-sampled ratio over configurations ν drawn from the diagram weights.",
+    "latex": "\\langle \\mathcal{O} \\rangle = \\frac{\\sum_\\nu \\mathcal{O}(\\nu)\\, W(\\nu)}{\\sum_\\nu W(\\nu)}",
+    "references": [],
+    "tags": ["diagmc", "monte-carlo"],
+    "variables": [
+      { "symbol": "\\nu", "description": "diagram configuration (order, topology, variables)" },
+      { "symbol": "W(\\nu)", "description": "configuration weight" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b017", "00000000-0000-4000-8000-00000000b019", "00000000-0000-4000-8000-00000000b021"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b019",
+    "name": "Metropolis-Hastings acceptance",
+    "description": "Acceptance probability for updates that change diagram order, topology, or internal times/momenta, including the proposal ratio.",
+    "latex": "A(\\nu \\to \\nu') = \\min\\!\\left( 1,\\; \\frac{W(\\nu')\\, p(\\nu' \\to \\nu)}{W(\\nu)\\, p(\\nu \\to \\nu')} \\right)",
+    "references": [],
+    "tags": ["diagmc", "monte-carlo"],
+    "variables": [
+      { "symbol": "p(\\nu \\to \\nu')", "description": "proposal probability of the update" },
+      { "symbol": "A", "description": "acceptance probability" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b018", "00000000-0000-4000-8000-00000000b020"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b020",
+    "name": "Detailed balance",
+    "description": "Condition ensuring the Markov chain samples the target distribution P(ν) ∝ |W(ν)|; sufficient for correct stationary statistics.",
+    "latex": "P(\\nu)\\, p(\\nu \\to \\nu') = P(\\nu')\\, p(\\nu' \\to \\nu)",
+    "references": [],
+    "tags": ["diagmc", "monte-carlo"],
+    "variables": [
+      { "symbol": "P(\\nu)", "description": "stationary probability of configuration ν" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b019"],
+    "px_height": 100,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b021",
+    "name": "Sign problem / reweighting",
+    "description": "When weights are not positive, one samples |W| and reweights by the sign; the average sign decays exponentially with system size and order, the central difficulty of fermionic DiagMC.",
+    "latex": "\\langle \\mathcal{O} \\rangle = \\frac{\\langle\\, \\mathcal{O}\\, \\operatorname{sgn} W\\, \\rangle_{|W|}}{\\langle\\, \\operatorname{sgn} W\\, \\rangle_{|W|}}",
+    "references": [],
+    "tags": ["diagmc", "monte-carlo", "sign-problem"],
+    "variables": [
+      { "symbol": "\\operatorname{sgn} W", "description": "sign of the configuration weight" },
+      { "symbol": "\\langle\\cdots\\rangle_{|W|}", "description": "average over the |W| distribution" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b018"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b022",
+    "name": "Bare Coulomb interaction",
+    "description": "Fourier transform of the 1/r Coulomb potential; the bare interaction line in electronic-structure diagrams.",
+    "latex": "V(\\mathbf{q}) = \\frac{4\\pi e^2}{q^2}",
+    "references": [],
+    "tags": ["diagmc", "many-body", "coulomb"],
+    "variables": [
+      { "symbol": "\\mathbf{q}", "description": "momentum transfer" },
+      { "symbol": "V(\\mathbf{q})", "description": "bare Coulomb interaction" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b023", "00000000-0000-4000-8000-00000000b024", "00000000-0000-4000-8000-00000000d002"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b023",
+    "name": "Polarization (RPA bubble)",
+    "description": "Lowest-order particle-hole bubble (Lindhard function); the factor 2 is spin and the minus sign is the fermion loop.",
+    "latex": "\\Pi(\\mathbf{q}, i\\nu_n) = -\\frac{2}{\\beta} \\sum_{\\mathbf{k},\\, m} G_0(\\mathbf{k}, i\\omega_m)\\, G_0(\\mathbf{k}+\\mathbf{q}, i\\omega_m + i\\nu_n)",
+    "references": [],
+    "tags": ["diagmc", "many-body", "rpa"],
+    "variables": [
+      { "symbol": "\\Pi", "description": "polarization (density-density response)" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b022", "00000000-0000-4000-8000-00000000b024"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b024",
+    "name": "Screened interaction (RPA)",
+    "description": "Dyson equation for the dynamically screened interaction W in the random-phase approximation; the W of the GW method.",
+    "latex": "W(\\mathbf{q}, i\\nu_n) = \\frac{V(\\mathbf{q})}{1 - V(\\mathbf{q})\\, \\Pi(\\mathbf{q}, i\\nu_n)}",
+    "references": [
+      { "text": "Hedin, Phys. Rev. 139, A796 (1965)", "url": "https://doi.org/10.1103/PhysRev.139.A796" }
+    ],
+    "tags": ["diagmc", "many-body", "rpa", "gw"],
+    "variables": [
+      { "symbol": "W", "description": "screened interaction" },
+      { "symbol": "\\Pi", "description": "polarization bubble" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b022", "00000000-0000-4000-8000-00000000b023", "00000000-0000-4000-8000-00000000b025", "00000000-0000-4000-8000-00000000b028"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b025",
+    "name": "GW self-energy",
+    "description": "Self-energy as the product of the Green's function and screened interaction; the GW approximation, widely used as a post-DFT correction to band gaps.",
+    "latex": "\\Sigma(\\mathbf{r}, \\mathbf{r}'; \\tau) = -\\,G(\\mathbf{r}, \\mathbf{r}'; \\tau)\\, W(\\mathbf{r}, \\mathbf{r}'; \\tau)",
+    "references": [
+      { "text": "Hedin, Phys. Rev. 139, A796 (1965)", "url": "https://doi.org/10.1103/PhysRev.139.A796" }
+    ],
+    "tags": ["diagmc", "many-body", "gw", "dft"],
+    "variables": [
+      { "symbol": "\\Sigma", "description": "GW self-energy" },
+      { "symbol": "W", "description": "screened Coulomb interaction" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b024", "00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000d013"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b026",
+    "name": "Fock (exchange) self-energy",
+    "description": "Static exchange self-energy; the first-order (Hartree-Fock) contribution from the bare interaction.",
+    "latex": "\\Sigma^{\\text{F}}(\\mathbf{k}) = -\\frac{1}{\\mathcal{V}}\\sum_{\\mathbf{k}'} V(\\mathbf{k}-\\mathbf{k}')\\, n_F(\\xi_{\\mathbf{k}'})",
+    "references": [],
+    "tags": ["diagmc", "many-body", "self-energy", "hartree-fock"],
+    "variables": [
+      { "symbol": "\\Sigma^{\\text{F}}", "description": "Fock/exchange self-energy" },
+      { "symbol": "\\mathcal{V}", "description": "system volume" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b007"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b027",
+    "name": "Luttinger-Ward functional",
+    "description": "Self-energy as the functional derivative of the Luttinger-Ward functional Φ[G] (sum of bold skeleton diagrams); foundation of conserving and bold-line DiagMC approximations.",
+    "latex": "\\Sigma = \\frac{\\delta \\Phi[G]}{\\delta G}",
+    "references": [
+      { "text": "Luttinger & Ward, Phys. Rev. 118, 1417 (1960)", "url": "https://doi.org/10.1103/PhysRev.118.1417" }
+    ],
+    "tags": ["diagmc", "many-body", "self-energy"],
+    "variables": [
+      { "symbol": "\\Phi[G]", "description": "Luttinger-Ward (Baym-Kadanoff) functional" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000b008"],
+    "px_height": 120,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b028",
+    "name": "Bethe-Salpeter equation",
+    "description": "Integral equation resumming the two-particle vertex from its irreducible part; describes excitons and collective modes.",
+    "latex": "\\Gamma = \\Gamma_{\\text{irr}} + \\Gamma_{\\text{irr}}\\, G G\\, \\Gamma",
+    "references": [
+      { "text": "Salpeter & Bethe, Phys. Rev. 84, 1232 (1951)", "url": "https://doi.org/10.1103/PhysRev.84.1232" }
+    ],
+    "tags": ["diagmc", "many-body", "vertex"],
+    "variables": [
+      { "symbol": "\\Gamma", "description": "full two-particle vertex" },
+      { "symbol": "\\Gamma_{\\text{irr}}", "description": "irreducible vertex (BSE kernel)" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b024"],
+    "px_height": 110,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-00000000b029",
+    "name": "Matsubara sum to occupation",
+    "description": "Canonical frequency sum: summing the bare propagator over Matsubara frequencies (with the convergence factor) gives the Fermi occupation.",
+    "latex": "\\frac{1}{\\beta}\\sum_{n} \\frac{e^{i\\omega_n 0^{+}}}{i\\omega_n - \\xi} = n_F(\\xi)",
+    "references": [],
+    "tags": ["diagmc", "many-body", "matsubara"],
+    "variables": [
+      { "symbol": "e^{i\\omega_n 0^{+}}", "description": "convergence factor fixing the time ordering" },
+      { "symbol": "n_F(\\xi)", "description": "Fermi occupation of state ξ" }
+    ],
+    "related": ["00000000-0000-4000-8000-00000000b006", "00000000-0000-4000-8000-00000000b012"],
+    "px_height": 130,
+    "created_at": "2026-06-24T12:00:00Z",
+    "updated_at": "2026-06-24T12:00:00Z"
+  }
+]

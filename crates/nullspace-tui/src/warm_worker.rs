@@ -13,14 +13,16 @@ pub struct WarmJob {
 }
 
 pub struct WarmResult {
-    pub latex: String,
-    pub px: u32,
     pub outcome: WarmOutcome,
 }
 
 pub enum WarmOutcome {
-    Ready(Result<RgbaImage, String>),
-    Skipped,
+    Ready {
+        latex: String,
+        px: u32,
+        image: Result<RgbaImage, String>,
+    },
+    Skipped(Vec<WarmJob>),
 }
 
 pub struct WarmWorker {
@@ -33,17 +35,23 @@ impl WarmWorker {
         let (job_tx, job_rx) = mpsc::channel::<Vec<WarmJob>>();
         let (result_tx, result_rx) = mpsc::channel::<WarmResult>();
         thread::spawn(move || {
+            let thread_count = std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(4)
+                .clamp(2, 6);
             let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
+                .num_threads(thread_count)
                 .thread_name(|index| format!("nullspace-render-warm-{index}"))
                 .build()
                 .ok();
 
             while let Ok(mut jobs) = job_rx.recv() {
+                let mut skipped = Vec::new();
                 while let Ok(newer_jobs) = job_rx.try_recv() {
-                    send_skipped(jobs, &result_tx);
+                    skipped.extend(jobs);
                     jobs = newer_jobs;
                 }
+                send_skipped(skipped, &result_tx);
 
                 if let Some(pool) = &pool {
                     pool.install(|| warm_jobs(jobs, &result_tx));
@@ -80,19 +88,19 @@ fn warm_jobs(jobs: Vec<WarmJob>, result_tx: &Sender<WarmResult>) {
             }
         };
         let _ = result_tx.send(WarmResult {
-            latex: job.latex,
-            px: job.px,
-            outcome: WarmOutcome::Ready(image),
+            outcome: WarmOutcome::Ready {
+                latex: job.latex,
+                px: job.px,
+                image,
+            },
         });
     });
 }
 
 fn send_skipped(jobs: Vec<WarmJob>, result_tx: &Sender<WarmResult>) {
-    for job in jobs {
+    if !jobs.is_empty() {
         let _ = result_tx.send(WarmResult {
-            latex: job.latex,
-            px: job.px,
-            outcome: WarmOutcome::Skipped,
+            outcome: WarmOutcome::Skipped(jobs),
         });
     }
 }

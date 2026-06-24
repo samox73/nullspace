@@ -1,15 +1,11 @@
-use nullspace_core::render::to_unicode_approx;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    prelude::Position,
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
 use crate::app::{AppState, BrowserFilter, CacheStatus, Mode};
-use crate::ui::widgets;
+use crate::ui::widgets::{self, EquationListRow};
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
@@ -21,51 +17,31 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(outer[0]);
 
-    const CACHE_MARKER_GUTTER: &str = "  ";
-
-    let items = app
+    let rows = app
         .items
         .iter()
-        .enumerate()
-        .flat_map(|(index, item)| {
+        .map(|item| {
             let marker = match app.cache_status_for(&item.latex, item.px_height) {
                 CacheStatus::Cached => "•",
                 CacheStatus::Loading => app.cache_spinner(),
                 CacheStatus::Empty => " ",
             };
-            let item = ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(marker, Style::default().fg(Color::Yellow)),
-                    Span::raw(" "),
-                    Span::styled(&item.name, Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-                Line::from(vec![
-                    Span::raw(CACHE_MARKER_GUTTER),
-                    Span::raw(to_unicode_approx(&item.latex)),
-                ]),
-            ]);
-            let spacer = (index + 1 < app.items.len()).then(|| ListItem::new(Line::from("")));
-            std::iter::once(item).chain(spacer)
+            EquationListRow::new(marker, item)
         })
         .collect::<Vec<_>>();
     app.list_visible_height = panes[0].height.saturating_sub(2);
-    let mut state = ListState::default().with_offset(app.list_scroll_offset * 2);
-    if !items.is_empty() {
-        state.select(Some(app.cursor * 2));
-    }
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(app.browser_title())
-                .borders(Borders::ALL),
-        )
-        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
-        .highlight_symbol("> ");
+    let (list, mut state) = widgets::equation_list(
+        &rows,
+        (!rows.is_empty()).then_some(app.cursor),
+        app.list_scroll_offset,
+        app.browser_title(),
+        false,
+    );
     frame.render_stateful_widget(list, panes[0], &mut state);
     let preview_title = format!("Preview ({}px  +/- zoom)", app.preview_px);
     widgets::preview_pane(frame, panes[1], app, &preview_title);
 
-    if matches!(app.mode, Mode::Search | Mode::VariableLookup) {
+    if matches!(app.mode, Mode::Search) {
         draw_filter_prompt(frame, app);
     }
 
@@ -92,49 +68,22 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
 
 fn draw_filter_prompt(frame: &mut Frame<'_>, app: &AppState) {
     let (title, label, query) = match &app.browser_filter {
-        BrowserFilter::Search(query) => ("Search", "Search: ", query.as_str()),
-        BrowserFilter::Variable(query) => ("Variable lookup", "Symbol: ", query.as_str()),
+        BrowserFilter::Search(query) => ("Search", "Query: ", query.as_str()),
         BrowserFilter::None => return,
     };
     let area = centered_rect(64, 4, frame.area());
-    let block = Block::default().title(title).borders(Borders::ALL);
-    let inner = block.inner(area);
-    let label_width = label.chars().count() as u16;
-    let input_width = inner.width.saturating_sub(label_width).max(1) as usize;
-    let (visible_query, cursor_column) =
-        visible_filter_input(query, app.browser_filter_cursor, input_width);
-    let hint = Line::styled(
-        "enter apply  esc clear",
-        Style::default().fg(Color::DarkGray),
+    widgets::search_box(
+        frame,
+        area,
+        widgets::SearchBox {
+            title,
+            label,
+            query,
+            cursor: app.browser_filter_cursor,
+            hint: "tag:  var:  name:  latex:  related:  enter apply  esc clear",
+            focused: true,
+        },
     );
-    let lines = vec![
-        Line::from(vec![Span::raw(label), Span::raw(visible_query)]),
-        hint,
-    ];
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-
-    if inner.width > label_width && inner.height > 0 {
-        frame.set_cursor_position(Position::new(
-            inner.x + label_width + cursor_column.min(input_width) as u16,
-            inner.y,
-        ));
-    }
-}
-
-fn visible_filter_input(query: &str, cursor: usize, width: usize) -> (String, usize) {
-    if width == 0 {
-        return (String::new(), 0);
-    }
-    let cursor = cursor.min(query.len());
-    let cursor_chars = query
-        .char_indices()
-        .take_while(|(index, _)| *index < cursor)
-        .count();
-    let start_chars = cursor_chars.saturating_sub(width.saturating_sub(1));
-    let visible = query.chars().skip(start_chars).take(width).collect();
-    (visible, cursor_chars - start_chars)
 }
 
 fn confirm_rect(message: &str, area: Rect) -> Rect {

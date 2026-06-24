@@ -10,7 +10,6 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         Mode::Browser => match key.code {
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Char('/') => Action::StartSearch,
-            KeyCode::Char('v') => Action::StartVariableLookup,
             KeyCode::Esc => Action::ClearFilter,
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
@@ -18,13 +17,14 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Char('n') => Action::NewEquation,
             KeyCode::Char('c') => Action::CopyCurrent,
+            KeyCode::Char('y') => Action::CopyLatexToClipboard,
             KeyCode::Char('d') => Action::DeleteRequest,
             KeyCode::Char('+') | KeyCode::Char('=') => Action::PreviewZoomIn,
             KeyCode::Char('-') => Action::PreviewZoomOut,
             KeyCode::Enter => Action::OpenCurrent,
             _ => Action::None,
         },
-        Mode::Search | Mode::VariableLookup => match key.code {
+        Mode::Search => match key.code {
             KeyCode::Esc => Action::BrowserFilterCancel,
             KeyCode::Enter => Action::BrowserFilterAccept,
             KeyCode::Backspace
@@ -48,13 +48,18 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         },
         Mode::RelatedPicker => match key.code {
             KeyCode::Esc => Action::RelatedPickerCancel,
-            KeyCode::Char('j') | KeyCode::Down => Action::RelatedPickerMoveDown,
-            KeyCode::Char('k') | KeyCode::Up => Action::RelatedPickerMoveUp,
+            KeyCode::Tab | KeyCode::BackTab => Action::RelatedPickerToggleFocus,
+            KeyCode::Down => Action::RelatedPickerMoveDown,
+            KeyCode::Up => Action::RelatedPickerMoveUp,
             KeyCode::Char(' ') => Action::RelatedPickerToggle,
             KeyCode::Enter => Action::RelatedPickerApply,
-            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                Action::RelatedPickerInput(key)
-            }
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Char(_) => Action::RelatedPickerInput(key),
             _ => Action::None,
         },
         Mode::Editor => {

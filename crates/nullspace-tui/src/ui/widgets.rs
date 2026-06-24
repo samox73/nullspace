@@ -1,63 +1,200 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect, Size},
+    prelude::Position,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
-use ratatui_image::{Resize, StatefulImage};
+use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
+
+use nullspace_core::EquationSummary;
 
 use crate::app::{AppState, Mode};
+
+#[derive(Debug, Clone)]
+pub struct EquationListRow {
+    pub marker: String,
+    pub name: String,
+    pub unicode_approx: String,
+}
+
+impl EquationListRow {
+    pub fn new(marker: impl Into<String>, item: &EquationSummary) -> Self {
+        Self {
+            marker: marker.into(),
+            name: item.name.clone(),
+            unicode_approx: item.unicode_approx.clone(),
+        }
+    }
+}
+
+pub fn equation_list(
+    rows: &[EquationListRow],
+    selected: Option<usize>,
+    offset: usize,
+    title: impl Into<Line<'static>>,
+    focused: bool,
+) -> (List<'static>, ListState) {
+    let items = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(index, row)| {
+            let item = ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(row.marker.clone(), Style::default().fg(Color::Yellow)),
+                    Span::raw(" "),
+                    Span::styled(
+                        row.name.clone(),
+                        Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![Span::raw("  "), Span::raw(row.unicode_approx.clone())]),
+            ]);
+            let spacer = (index + 1 < rows.len()).then(|| ListItem::new(Line::from("")));
+            std::iter::once(item).chain(spacer)
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default().with_offset(offset * 2);
+    if !items.is_empty() {
+        state.select(selected.map(|index| index * 2));
+    }
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(if focused {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                }),
+        )
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    (list, state)
+}
+
+pub struct SearchBox<'a> {
+    pub title: &'a str,
+    pub label: &'a str,
+    pub query: &'a str,
+    pub cursor: usize,
+    pub hint: &'a str,
+    pub focused: bool,
+}
+
+pub fn search_box(frame: &mut Frame<'_>, area: Rect, props: SearchBox<'_>) {
+    let block = Block::default()
+        .title(props.title)
+        .borders(Borders::ALL)
+        .border_style(if props.focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        });
+    let inner = block.inner(area);
+    let label_width = props.label.chars().count() as u16;
+    let input_width = inner.width.saturating_sub(label_width).max(1) as usize;
+    let (visible_query, cursor_column) =
+        visible_search_input(props.query, props.cursor, input_width);
+    let lines = vec![
+        Line::from(vec![
+            Span::raw(props.label.to_string()),
+            Span::raw(visible_query),
+        ]),
+        Line::styled(props.hint.to_string(), Style::default().fg(Color::DarkGray)),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+
+    if props.focused && inner.width > label_width && inner.height > 0 {
+        frame.set_cursor_position(Position::new(
+            inner.x + label_width + cursor_column.min(input_width) as u16,
+            inner.y,
+        ));
+    }
+}
+
+fn visible_search_input(query: &str, cursor: usize, width: usize) -> (String, usize) {
+    if width == 0 {
+        return (String::new(), 0);
+    }
+    let cursor = cursor.min(query.len());
+    let cursor_chars = query
+        .char_indices()
+        .take_while(|(index, _)| *index < cursor)
+        .count();
+    let start_chars = cursor_chars.saturating_sub(width.saturating_sub(1));
+    let visible = query.chars().skip(start_chars).take(width).collect();
+    (visible, cursor_chars - start_chars)
+}
 
 pub fn preview_pane(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, title: &str) {
     let block = Block::default().title(title).borders(Borders::ALL);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.preview_protocol.is_some() {
-        let error_height = if app.preview_error.is_some() {
-            4.min(inner.height)
-        } else {
-            0
-        };
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(error_height)])
-            .split(inner);
-        app.set_preview_warm_size(Size {
-            width: chunks[0].width,
-            height: chunks[0].height,
-        });
+    // A hard render error with no image to fall back on: show the error full-pane.
+    if app.preview_protocol.is_none() && app.preview_error.is_some() {
+        if let Some(error) = &app.preview_error {
+            frame.render_widget(render_error(error), inner);
+        }
+        return;
+    }
+
+    let error_height = if app.preview_error.is_some() {
+        4.min(inner.height)
+    } else {
+        0
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(error_height)])
+        .split(inner);
+    let image_size = Size {
+        width: chunks[0].width,
+        height: chunks[0].height,
+    };
+    app.set_preview_warm_size(image_size);
+
+    // Only ever render a protocol that is already encoded for this exact area. Encoding on
+    // the UI thread blocks scrolling, so anything that still needs (re)encoding is handed
+    // to the background encoder and a spinner is shown until the result is promoted in.
+    let ready = app.preview_protocol.as_ref().is_some_and(|protocol| {
+        protocol
+            .needs_resize(&Resize::Fit(None), image_size)
+            .is_none()
+    });
+
+    if ready {
         frame.render_widget(Clear, chunks[0]);
         if let Some(protocol) = &mut app.preview_protocol {
             let image_area = centered_image_area(protocol, chunks[0]);
             frame.render_stateful_widget(StatefulImage::default(), image_area, protocol);
         }
-        if let Some(error) = &app.preview_error {
-            frame.render_widget(render_stale_warning(error), chunks[1]);
+    } else {
+        if app.preview_protocol.is_some() {
+            app.request_preview_encode(image_size);
         }
-        return;
+        let spinner = app.cache_spinner();
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
+            .split(chunks[0]);
+        frame.render_widget(
+            Paragraph::new(spinner).alignment(Alignment::Center),
+            rows[1],
+        );
     }
 
     if let Some(error) = &app.preview_error {
-        frame.render_widget(render_error(error), inner);
-        return;
+        frame.render_widget(render_stale_warning(error), chunks[1]);
     }
-
-    app.set_preview_warm_size(Size {
-        width: inner.width,
-        height: inner.height,
-    });
-
-    let spinner = app.cache_spinner();
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Min(0)])
-        .split(inner);
-    frame.render_widget(
-        Paragraph::new(spinner).alignment(Alignment::Center),
-        rows[1],
-    );
 }
 
 fn render_stale_warning(error: &str) -> Paragraph<'_> {
@@ -103,10 +240,9 @@ fn centered_image_area(protocol: &ratatui_image::protocol::StatefulProtocol, are
 pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let help = match app.mode {
         Mode::Browser => {
-            "j/k move  / search  v symbol  enter edit  +/- zoom  n new  c copy  d delete  q quit"
+            "j/k move  / search  enter edit  +/- zoom  n new  c clone  y copy latex  d delete  q quit"
         }
-        Mode::Search => "type search  enter apply  esc clear",
-        Mode::VariableLookup => "type symbol  enter apply  esc clear",
+        Mode::Search => "tag: var: name: latex: related:  enter apply  esc clear",
         Mode::Editor => "tab field  esc back",
         Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
         Mode::ConfirmDelete(_) => "y/d/enter confirm  n/esc cancel",

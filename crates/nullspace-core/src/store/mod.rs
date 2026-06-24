@@ -58,6 +58,9 @@ impl Store {
         if query.is_empty() {
             return self.list();
         }
+        if let Some((scope, term)) = parse_search_scope(query) {
+            return self.search_scoped(scope, term);
+        }
         let pattern = format!("%{}%", like_escape(&query.to_lowercase()));
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
@@ -69,6 +72,58 @@ impl Store {
                 OR lower(t.tag)         LIKE ?1 ESCAPE '\\'
              ORDER BY e.name COLLATE NOCASE",
         )?;
+        let rows = stmt.query_map(params![pattern], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    fn search_scoped(&self, scope: SearchScope, term: &str) -> Result<Vec<EquationSummary>> {
+        let term = term.trim();
+        if term.is_empty() {
+            return self.list();
+        }
+        let pattern = format!("%{}%", like_escape(&term.to_lowercase()));
+        let sql = match scope {
+            SearchScope::Tag => {
+                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+                 FROM equations e
+                 JOIN tags t ON t.equation_id = e.id
+                 WHERE lower(t.tag) LIKE ?1 ESCAPE '\\'
+                 ORDER BY e.name COLLATE NOCASE"
+            }
+            SearchScope::Variable => {
+                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+                 FROM equations e
+                 JOIN variables v ON v.equation_id = e.id
+                 WHERE lower(v.symbol) LIKE ?1 ESCAPE '\\'
+                    OR lower(v.description) LIKE ?1 ESCAPE '\\'
+                 ORDER BY e.name COLLATE NOCASE"
+            }
+            SearchScope::Name => {
+                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+                 FROM equations e
+                 WHERE lower(e.name) LIKE ?1 ESCAPE '\\'
+                 ORDER BY e.name COLLATE NOCASE"
+            }
+            SearchScope::Latex => {
+                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+                 FROM equations e
+                 WHERE lower(e.latex) LIKE ?1 ESCAPE '\\'
+                 ORDER BY e.name COLLATE NOCASE"
+            }
+            SearchScope::Related => {
+                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+                 FROM equations e
+                 JOIN related r ON r.a = e.id OR r.b = e.id
+                 JOIN equations other ON other.id = CASE WHEN r.a = e.id THEN r.b ELSE r.a END
+                 LEFT JOIN tags t ON t.equation_id = other.id
+                 WHERE lower(other.name)        LIKE ?1 ESCAPE '\\'
+                    OR lower(other.description) LIKE ?1 ESCAPE '\\'
+                    OR lower(other.latex)       LIKE ?1 ESCAPE '\\'
+                    OR lower(t.tag)             LIKE ?1 ESCAPE '\\'
+                 ORDER BY e.name COLLATE NOCASE"
+            }
+        };
+        let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt.query_map(params![pattern], summary_from_row)?;
         collect_summaries(rows)
     }
@@ -196,7 +251,15 @@ impl Store {
 
     pub fn insert(&mut self, eq: &Equation) -> Result<()> {
         let tx = self.conn.transaction()?;
-        insert_equation_row(&tx, eq)?;
+        insert_equation_row(&tx, eq, false)?;
+        insert_children(&tx, eq)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn insert_allowing_duplicate_latex(&mut self, eq: &Equation) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        insert_equation_row(&tx, eq, true)?;
         insert_children(&tx, eq)?;
         tx.commit()?;
         Ok(())
@@ -224,6 +287,17 @@ impl Store {
         delete_children(&tx, eq.id)?;
         insert_children(&tx, eq)?;
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn update_px_height(&self, id: EquationId, px_height: u32) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE equations SET px_height=?2 WHERE id=?1",
+            params![id.to_string(), px_height as i64],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound(id.to_string()));
+        }
         Ok(())
     }
 
@@ -310,10 +384,36 @@ impl Store {
     }
 }
 
-fn insert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchScope {
+    Tag,
+    Variable,
+    Name,
+    Latex,
+    Related,
+}
+
+fn parse_search_scope(query: &str) -> Option<(SearchScope, &str)> {
+    let (scope, term) = query.split_once(':')?;
+    let scope = match scope.trim().to_ascii_lowercase().as_str() {
+        "tag" => SearchScope::Tag,
+        "var" => SearchScope::Variable,
+        "name" => SearchScope::Name,
+        "latex" => SearchScope::Latex,
+        "related" => SearchScope::Related,
+        _ => return None,
+    };
+    Some((scope, term))
+}
+
+fn insert_equation_row(
+    conn: &Connection,
+    eq: &Equation,
+    allow_duplicate_latex: bool,
+) -> Result<()> {
     let latex_norm = equation_identity(&eq.latex);
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at, allow_duplicate_latex) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             eq.id.to_string(),
             eq.name,
@@ -322,7 +422,8 @@ fn insert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
             latex_norm,
             eq.px_height as i64,
             eq.created_at,
-            eq.updated_at
+            eq.updated_at,
+            allow_duplicate_latex as i64,
         ],
     )
     .map_err(|err| duplicate_or_db(err, &eq.latex))?;
@@ -445,11 +546,14 @@ fn delete_children_conn(conn: &Connection, id: EquationId) -> Result<()> {
 
 fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<EquationSummary> {
     let id: String = row.get(0)?;
+    let latex: String = row.get(3)?;
+    let unicode_approx = crate::render::to_unicode_approx(&latex);
     Ok(EquationSummary {
         id: parse_id_col(&id)?,
         name: row.get(1)?,
         description: row.get(2)?,
-        latex: row.get(3)?,
+        latex,
+        unicode_approx,
         px_height: row.get::<_, i64>(4)? as u32,
     })
 }
@@ -523,6 +627,45 @@ mod tests {
     }
 
     #[test]
+    fn insert_allowing_duplicate_latex_preserves_formula() {
+        let mut store = Store::open_in_memory().unwrap();
+        let original = Equation::new("Original".to_string(), "E=mc^2".to_string());
+        store.insert(&original).unwrap();
+
+        let duplicate = Equation::new("Clone".to_string(), original.latex.clone());
+        let err = store.insert(&duplicate).unwrap_err();
+        assert!(matches!(err, Error::Duplicate(_)));
+
+        store.insert_allowing_duplicate_latex(&duplicate).unwrap();
+        let got = store.get(duplicate.id).unwrap();
+        assert_eq!(got.latex, original.latex);
+        assert_eq!(store.all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn update_px_height_only_changes_px_height() {
+        let mut store = Store::open_in_memory().unwrap();
+        let eq = full_equation("Energy");
+        let id = eq.id;
+        store.insert(&eq).unwrap();
+        let before = store.get(id).unwrap();
+        let child_count = store.child_count_for_tests(id).unwrap();
+
+        store.update_px_height(id, 96).unwrap();
+
+        let after = store.get(id).unwrap();
+        assert_eq!(after.px_height, 96);
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.description, before.description);
+        assert_eq!(after.latex, before.latex);
+        assert_eq!(after.variables, before.variables);
+        assert_eq!(after.tags, before.tags);
+        assert_eq!(after.references, before.references);
+        assert_eq!(after.updated_at, before.updated_at);
+        assert_eq!(store.child_count_for_tests(id).unwrap(), child_count);
+    }
+
+    #[test]
     fn list_returns_summaries_sorted_by_name() {
         let mut store = Store::open_in_memory().unwrap();
         store
@@ -533,6 +676,24 @@ mod tests {
             .unwrap();
         let names: Vec<_> = store.list().unwrap().into_iter().map(|e| e.name).collect();
         assert_eq!(names, vec!["Alpha", "Zeta"]);
+    }
+
+    #[test]
+    fn list_summaries_include_unicode_approximation() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .insert(&Equation::new(
+                "Energy".to_string(),
+                "\\alpha^2".to_string(),
+            ))
+            .unwrap();
+
+        let summary = store.list().unwrap().pop().unwrap();
+
+        assert_eq!(
+            summary.unicode_approx,
+            crate::render::to_unicode_approx("\\alpha^2")
+        );
     }
 
     #[test]
@@ -556,6 +717,52 @@ mod tests {
         let latex = store.search("\\pi").unwrap();
         assert_eq!(latex.len(), 1);
         assert_eq!(latex[0].name, "Area");
+    }
+
+    #[test]
+    fn search_supports_scoped_prefixes() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut energy = full_equation("Energy");
+        energy.tags = vec!["physics".to_string()];
+        let mut area = Equation::new("Area".to_string(), "A = \\pi r^2".to_string());
+        area.description = "circle".to_string();
+        area.tags = vec!["geometry".to_string()];
+        area.variables = vec![Variable {
+            symbol: "A".to_string(),
+            description: "area".to_string(),
+        }];
+        store.insert(&energy).unwrap();
+        store.insert(&area).unwrap();
+        energy.related.push(area.id);
+        store.update(&energy).unwrap();
+
+        let tag = store.search("tag:phys").unwrap();
+        assert_eq!(tag.len(), 1);
+        assert_eq!(tag[0].name, "Energy");
+        let variable = store.search("var:area").unwrap();
+        assert_eq!(variable.len(), 1);
+        assert_eq!(variable[0].name, "Area");
+        let name = store.search("name:energy").unwrap();
+        assert_eq!(name.len(), 1);
+        assert_eq!(name[0].name, "Energy");
+        let latex = store.search("latex:\\pi").unwrap();
+        assert_eq!(latex.len(), 1);
+        assert_eq!(latex[0].name, "Area");
+        let related = store.search("related:circle").unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].name, "Energy");
+    }
+
+    #[test]
+    fn search_unknown_prefix_falls_back_to_general_search() {
+        let mut store = Store::open_in_memory().unwrap();
+        let eq = Equation::new("Energy".to_string(), "source:external".to_string());
+        store.insert(&eq).unwrap();
+
+        let results = store.search("source:external").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Energy");
     }
 
     #[test]

@@ -1,0 +1,366 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "name": "Bloch's theorem",
+    "description": "Electron eigenstates in a periodic potential are plane waves modulated by a lattice-periodic function.",
+    "latex": "\\psi_{n\\mathbf{k}}(\\mathbf{r}) = e^{i \\mathbf{k}\\cdot\\mathbf{r}}\\, u_{n\\mathbf{k}}(\\mathbf{r})",
+    "references": [{ "text": "Kittel, Introduction to Solid State Physics, ch. 7", "url": null }],
+    "tags": ["band structure", "electronic structure"],
+    "variables": [
+      { "symbol": "\\psi", "description": "Bloch wavefunction" },
+      { "symbol": "\\mathbf{k}", "description": "crystal wavevector" },
+      { "symbol": "u", "description": "lattice-periodic function" }
+    ],
+    "related": [
+      "00000000-0000-4000-8000-000000000005",
+      "00000000-0000-4000-8000-000000000015",
+      "00000000-0000-4000-8000-000000000016"
+    ],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000002",
+    "name": "Bragg's law",
+    "description": "Condition for constructive interference of waves diffracted by crystal planes.",
+    "latex": "n\\lambda = 2 d \\sin\\theta",
+    "references": [],
+    "tags": ["crystallography", "diffraction"],
+    "variables": [
+      { "symbol": "n", "description": "diffraction order" },
+      { "symbol": "\\lambda", "description": "X-ray wavelength" },
+      { "symbol": "d", "description": "interplanar spacing" },
+      { "symbol": "\\theta", "description": "scattering angle" }
+    ],
+    "related": ["00000000-0000-4000-8000-000000000015"],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "name": "Drude conductivity",
+    "description": "DC electrical conductivity of the free-electron gas in the Drude model.",
+    "latex": "\\sigma = \\frac{n e^{2} \\tau}{m}",
+    "references": [{ "text": "Ashcroft & Mermin, Solid State Physics, ch. 1", "url": null }],
+    "tags": ["transport"],
+    "variables": [
+      { "symbol": "\\sigma", "description": "electrical conductivity" },
+      { "symbol": "n", "description": "carrier density" },
+      { "symbol": "\\tau", "description": "relaxation time" },
+      { "symbol": "m", "description": "electron mass" }
+    ],
+    "related": [
+      "00000000-0000-4000-8000-000000000009",
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000014",
+      "00000000-0000-4000-8000-000000000017"
+    ],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000004",
+    "name": "Density of states (3D)",
+    "description": "Density of states per unit volume for a 3D free-electron gas.",
+    "latex": "g(E) = \\frac{1}{2\\pi^{2}} \\left( \\frac{2m}{\\hbar^{2}} \\right)^{3/2} \\sqrt{E}",
+    "references": [],
+    "tags": ["electronic structure"],
+    "variables": [
+      { "symbol": "g", "description": "density of states" },
+      { "symbol": "E", "description": "energy" },
+      { "symbol": "m", "description": "electron mass" }
+    ],
+    "related": [
+      "00000000-0000-4000-8000-000000000005",
+      "00000000-0000-4000-8000-000000000006",
+      "00000000-0000-4000-8000-000000000020"
+    ],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000005",
+    "name": "Fermi energy",
+    "description": "Fermi energy of a 3D free-electron gas in terms of carrier density.",
+    "latex": "E_F = \\frac{\\hbar^{2}}{2m} \\left( 3\\pi^{2} n \\right)^{2/3}",
+    "references": [],
+    "tags": ["electronic structure"],
+    "variables": [
+      { "symbol": "E_F", "description": "Fermi energy" },
+      { "symbol": "n", "description": "carrier density" }
+    ],
+    "related": ["00000000-0000-4000-8000-000000000006"],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000006",
+    "name": "Fermi-Dirac distribution",
+    "description": "Occupation probability of a single-particle state at temperature T.",
+    "latex": "f(E) = \\frac{1}{e^{(E-\\mu)/k_B T} + 1}",
+    "references": [],
+    "tags": ["statistics", "electronic structure"],
+    "variables": [
+      { "symbol": "f", "description": "occupation probability" },
+      { "symbol": "E", "description": "energy" },
+      { "symbol": "\\mu", "description": "chemical potential" },
+      { "symbol": "T", "description": "temperature" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000007",
+    "name": "Debye heat capacity (low T)",
+    "description": "Low-temperature lattice heat capacity following the Debye T-cubed law.",
+    "latex": "C_V = \\frac{12\\pi^{4}}{5} N k_B \\left( \\frac{T}{\\Theta_D} \\right)^{3}",
+    "references": [{ "text": "Kittel, ch. 5", "url": null }],
+    "tags": ["thermodynamics", "phonons"],
+    "variables": [
+      { "symbol": "C_V", "description": "heat capacity" },
+      { "symbol": "T", "description": "temperature" },
+      { "symbol": "\\Theta_D", "description": "Debye temperature" }
+    ],
+    "related": [
+      "00000000-0000-4000-8000-000000000008",
+      "00000000-0000-4000-8000-000000000015"
+    ],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000008",
+    "name": "Dulong-Petit law",
+    "description": "Classical high-temperature limit of the lattice heat capacity.",
+    "latex": "C_V = 3 N k_B",
+    "references": [],
+    "tags": ["thermodynamics"],
+    "variables": [
+      { "symbol": "C_V", "description": "heat capacity" },
+      { "symbol": "N", "description": "number of atoms" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000009",
+    "name": "Hall coefficient",
+    "description": "Hall coefficient for a single carrier type.",
+    "latex": "R_H = -\\frac{1}{n e}",
+    "references": [],
+    "tags": ["transport", "magnetism"],
+    "variables": [
+      { "symbol": "R_H", "description": "Hall coefficient" },
+      { "symbol": "n", "description": "carrier density" }
+    ],
+    "related": [
+      "00000000-0000-4000-8000-000000000013",
+      "00000000-0000-4000-8000-000000000019"
+    ],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000010",
+    "name": "Wiedemann-Franz law",
+    "description": "Ratio of thermal to electrical conductivity is proportional to temperature.",
+    "latex": "\\frac{\\kappa}{\\sigma} = L T",
+    "references": [],
+    "tags": ["transport", "thermodynamics"],
+    "variables": [
+      { "symbol": "\\kappa", "description": "thermal conductivity" },
+      { "symbol": "\\sigma", "description": "electrical conductivity" },
+      { "symbol": "L", "description": "Lorenz number" },
+      { "symbol": "T", "description": "temperature" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000011",
+    "name": "London penetration depth",
+    "description": "Characteristic length over which a magnetic field decays in a superconductor.",
+    "latex": "\\lambda_L = \\sqrt{\\frac{m}{\\mu_0 n_s e^{2}}}",
+    "references": [],
+    "tags": ["superconductivity"],
+    "variables": [
+      { "symbol": "\\lambda_L", "description": "penetration depth" },
+      { "symbol": "n_s", "description": "superfluid density" }
+    ],
+    "related": ["00000000-0000-4000-8000-000000000012"],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000012",
+    "name": "BCS gap relation",
+    "description": "Relation between the zero-temperature gap and the critical temperature in weak-coupling BCS theory.",
+    "latex": "\\Delta(0) = 1.764\\, k_B T_c",
+    "references": [
+      { "text": "Bardeen, Cooper, Schrieffer (1957)", "url": "https://doi.org/10.1103/PhysRev.108.1175" }
+    ],
+    "tags": ["superconductivity"],
+    "variables": [
+      { "symbol": "\\Delta", "description": "superconducting gap" },
+      { "symbol": "T_c", "description": "critical temperature" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000013",
+    "name": "Cyclotron frequency",
+    "description": "Angular frequency of an electron orbiting in a magnetic field.",
+    "latex": "\\omega_c = \\frac{e B}{m^{*}}",
+    "references": [],
+    "tags": ["transport", "magnetism"],
+    "variables": [
+      { "symbol": "\\omega_c", "description": "cyclotron frequency" },
+      { "symbol": "B", "description": "magnetic field" },
+      { "symbol": "m^{*}", "description": "effective mass" }
+    ],
+    "related": [
+      "00000000-0000-4000-8000-000000000016",
+      "00000000-0000-4000-8000-000000000019"
+    ],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000014",
+    "name": "Plasma frequency",
+    "description": "Natural oscillation frequency of the electron gas.",
+    "latex": "\\omega_p = \\sqrt{\\frac{n e^{2}}{\\varepsilon_0 m}}",
+    "references": [],
+    "tags": ["transport", "optics"],
+    "variables": [
+      { "symbol": "\\omega_p", "description": "plasma frequency" },
+      { "symbol": "n", "description": "carrier density" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000015",
+    "name": "Phonon dispersion (1D chain)",
+    "description": "Dispersion relation of a monatomic one-dimensional chain of masses and springs.",
+    "latex": "\\omega(k) = 2 \\sqrt{\\frac{C}{M}} \\left| \\sin\\frac{k a}{2} \\right|",
+    "references": [],
+    "tags": ["phonons", "lattice dynamics"],
+    "variables": [
+      { "symbol": "\\omega", "description": "phonon frequency" },
+      { "symbol": "k", "description": "wavevector" },
+      { "symbol": "C", "description": "spring constant" },
+      { "symbol": "M", "description": "atomic mass" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000016",
+    "name": "Effective mass",
+    "description": "Effective mass from the curvature of the band dispersion.",
+    "latex": "\\frac{1}{m^{*}} = \\frac{1}{\\hbar^{2}} \\frac{d^{2} E}{d k^{2}}",
+    "references": [],
+    "tags": ["band structure"],
+    "variables": [
+      { "symbol": "m^{*}", "description": "effective mass" },
+      { "symbol": "E", "description": "band energy" },
+      { "symbol": "k", "description": "wavevector" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000017",
+    "name": "Einstein relation",
+    "description": "Relation between diffusion coefficient and mobility for charge carriers.",
+    "latex": "D = \\frac{\\mu k_B T}{e}",
+    "references": [],
+    "tags": ["transport"],
+    "variables": [
+      { "symbol": "D", "description": "diffusion coefficient" },
+      { "symbol": "\\mu", "description": "mobility" },
+      { "symbol": "T", "description": "temperature" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000018",
+    "name": "Curie-Weiss law",
+    "description": "Temperature dependence of the magnetic susceptibility above the ordering temperature.",
+    "latex": "\\chi = \\frac{C}{T - T_C}",
+    "references": [],
+    "tags": ["magnetism"],
+    "variables": [
+      { "symbol": "\\chi", "description": "magnetic susceptibility" },
+      { "symbol": "T", "description": "temperature" },
+      { "symbol": "T_C", "description": "Curie temperature" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000019",
+    "name": "Quantum Hall resistance",
+    "description": "Quantized Hall resistance plateaus in the integer quantum Hall effect.",
+    "latex": "R_{xy} = \\frac{h}{\\nu e^{2}}",
+    "references": [
+      { "text": "von Klitzing et al. (1980)", "url": "https://doi.org/10.1103/PhysRevLett.45.494" }
+    ],
+    "tags": ["transport", "magnetism", "quantum Hall"],
+    "variables": [
+      { "symbol": "R_{xy}", "description": "Hall resistance" },
+      { "symbol": "\\nu", "description": "filling factor" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000020",
+    "name": "Mott variable-range hopping",
+    "description": "Temperature dependence of conductivity for hopping transport in 3D disordered systems.",
+    "latex": "\\sigma = \\sigma_0 \\exp\\left[ -\\left( \\frac{T_0}{T} \\right)^{1/4} \\right]",
+    "references": [],
+    "tags": ["transport", "disorder"],
+    "variables": [
+      { "symbol": "\\sigma", "description": "conductivity" },
+      { "symbol": "T", "description": "temperature" },
+      { "symbol": "T_0", "description": "characteristic temperature" }
+    ],
+    "related": [],
+    "px_height": 192,
+    "created_at": "2026-06-23T12:00:00Z",
+    "updated_at": "2026-06-23T12:00:00Z"
+  }
+]

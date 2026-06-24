@@ -5,6 +5,16 @@ use ratex_svg::{render_to_svg, SvgOptions};
 use ratex_types::{color::Color, math_style::MathStyle};
 use resvg::{tiny_skia, usvg};
 
+pub fn validate(latex: &str) -> Result<(), String> {
+    let latex = latex.trim();
+    if latex.is_empty() {
+        return Err("empty".to_string());
+    }
+    parse(latex)
+        .map(|_| ())
+        .map_err(|err| format!("parse error: {err}"))
+}
+
 pub fn render(latex: &str, px_height: u32) -> Result<RgbaImage, String> {
     let latex = latex.trim();
     if latex.is_empty() {

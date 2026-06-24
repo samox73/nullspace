@@ -1,13 +1,13 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
-use crate::app::{AppState, Mode};
-use crate::ui::widgets;
+use crate::app::{AppState, Mode, RelatedPickerFocus};
+use crate::ui::widgets::{self, EquationListRow};
 
 const LABELS: [&str; 7] = [
     "Name",
@@ -149,61 +149,74 @@ fn text_box_height(editor: &crate::app::EditorState, index: usize, width: u16) -
     textarea.measure(width).preferred_rows
 }
 
-fn draw_related_picker(frame: &mut Frame<'_>, app: &AppState) {
+fn draw_related_picker(frame: &mut Frame<'_>, app: &mut AppState) {
     let Some(editor) = &app.editor else {
         return;
     };
+    let query = editor.related_picker.query.clone();
+    let query_cursor = editor.related_picker.query_cursor;
+    let picker_cursor = editor.related_picker.cursor;
+    let list_scroll_offset = editor.related_picker.list_scroll_offset;
+    let selected = editor.related_picker.selected.clone();
+    let focus = editor.related_picker.focus;
     let items = app.filtered_related_picker_items();
-    let area = centered_rect(76, 20, frame.area());
-    frame.render_widget(Clear, area);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)])
-        .split(area);
-
-    let search = if editor.related_picker.query.is_empty() {
-        "Type to fuzzy search by name, description, or LaTeX".to_string()
-    } else {
-        format!("Search: {}", editor.related_picker.query)
-    };
-    frame.render_widget(
-        Paragraph::new(search).block(Block::default().title("Search").borders(Borders::ALL)),
-        chunks[0],
-    );
-
-    let list_items = items
+    let rows = items
         .iter()
         .map(|item| {
-            let checked = if editor.related_picker.selected.contains(&item.id) {
+            let checked = if selected.contains(&item.id) {
                 "[x]"
             } else {
                 "[ ]"
             };
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(checked, Style::default().fg(Color::Yellow)),
-                    Span::raw(" "),
-                    Span::styled(&item.name, Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-                Line::styled(&item.description, Style::default().fg(Color::DarkGray)),
-                Line::styled(&item.latex, Style::default().fg(Color::DarkGray)),
-            ])
+            EquationListRow::new(checked, item)
         })
         .collect::<Vec<_>>();
+    let item_count = rows.len();
 
-    let mut state = ListState::default();
-    if !list_items.is_empty() {
-        state.select(Some(editor.related_picker.cursor.min(list_items.len() - 1)));
+    let modal_height = frame.area().height.saturating_sub(4).clamp(12, 34);
+    let area = centered_rect(88, modal_height, frame.area());
+    frame.render_widget(Clear, area);
+    let content_height = modal_height.saturating_sub(3);
+    let preview_height = ((content_height as usize * 45) / 100)
+        .saturating_sub(2)
+        .max(3)
+        .min(u16::MAX as usize) as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(preview_height),
+            Constraint::Min(1),
+        ])
+        .split(area);
+
+    widgets::search_box(
+        frame,
+        chunks[0],
+        widgets::SearchBox {
+            title: "Search",
+            label: "Query: ",
+            query: &query,
+            cursor: query_cursor,
+            hint: "tab list  enter apply  esc cancel",
+            focused: focus == RelatedPickerFocus::Search,
+        },
+    );
+
+    widgets::preview_pane(frame, chunks[1], app, "Equation");
+
+    if let Some(editor) = &mut app.editor {
+        editor.related_picker.list_visible_height = chunks[2].height.saturating_sub(2);
     }
-    let list = List::new(list_items)
-        .block(
-            Block::default()
-                .title("Related equations  space toggles, enter applies")
-                .borders(Borders::ALL),
-        )
-        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
-        .highlight_symbol("> ");
-    frame.render_stateful_widget(list, chunks[1], &mut state);
+
+    let (list, mut state) = widgets::equation_list(
+        &rows,
+        (item_count > 0).then_some(picker_cursor.min(item_count.saturating_sub(1))),
+        list_scroll_offset,
+        "Related equations  tab search  space toggles  enter applies",
+        focus == RelatedPickerFocus::List,
+    );
+    frame.render_stateful_widget(list, chunks[2], &mut state);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

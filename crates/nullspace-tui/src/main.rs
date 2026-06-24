@@ -1,5 +1,6 @@
 mod action;
 mod app;
+mod clipboard;
 mod event;
 mod graphics;
 mod protocol_warm_worker;

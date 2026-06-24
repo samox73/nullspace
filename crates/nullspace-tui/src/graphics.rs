@@ -11,7 +11,7 @@ pub struct Graphics {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct TerminalPalette {
+pub(crate) struct TerminalPalette {
     foreground: [u8; 3],
     background: [u8; 3],
 }

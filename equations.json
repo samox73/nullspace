@@ -1,42 +1,32 @@
 [
   {
-    "id": "d16235a2-c744-4baa-b169-c3519d693b26",
-    "name": "Euler identity",
-    "description": "Seed equation",
-    "latex": "e^{i\\pi} + 1 = 0",
+    "id": "5a5c318d-8254-4112-b14d-4b2a87d1088c",
+    "name": "Non-interacting electron Hamiltonian",
+    "description": "",
+    "latex": "\\hat{H}_\\text{0} = \n\\sum_{n\\mathbf{k}} \\varepsilon_{n\\mathbf{k}} \n\\hat{c}^\\dagger_{n\\mathbf{k}} \\hat{c}_{n\\mathbf{k}}",
     "references": [],
-    "tags": [],
-    "variables": [],
+    "tags": [
+      "free electron",
+      "hamiltonian"
+    ],
+    "variables": [
+      {
+        "symbol": "\\varepsilon",
+        "description": "electronic band structure eigenvalues"
+      },
+      {
+        "symbol": "\\hat{c}_{n\\mathbf{k}}",
+        "description": "electron annihilation operator"
+      },
+      {
+        "symbol": "\\hat{c}^\\dagger_{n\\mathbf{k}}",
+        "description": "electron creation operator"
+      }
+    ],
     "related": [],
-    "px_height": 48,
-    "created_at": "2026-06-23T11:50:51.884132717Z",
-    "updated_at": "2026-06-23T11:50:51.884132717Z"
-  },
-  {
-    "id": "712a830a-ccca-4eea-8f29-ff7013fb0e9b",
-    "name": "Gauss law",
-    "description": "Seed equation",
-    "latex": "\\nabla \\cdot \\mathbf{E} = \\rho/\\varepsilon_0",
-    "references": [],
-    "tags": [],
-    "variables": [],
-    "related": [],
-    "px_height": 48,
-    "created_at": "2026-06-23T11:50:51.8826244Z",
-    "updated_at": "2026-06-23T11:50:51.8826244Z"
-  },
-  {
-    "id": "cd316887-a2e9-4362-a775-a649d4d04f05",
-    "name": "Mass energy equivalence",
-    "description": "Seed equation",
-    "latex": "E = mc^2",
-    "references": [],
-    "tags": [],
-    "variables": [],
-    "related": [],
-    "px_height": 48,
-    "created_at": "2026-06-23T11:50:51.881104531Z",
-    "updated_at": "2026-06-23T11:50:51.881104531Z"
+    "px_height": 160,
+    "created_at": "2026-06-23T14:12:49.940098382Z",
+    "updated_at": "2026-06-23T14:20:45.923106313Z"
   },
   {
     "id": "d1a9d8f8-d1f3-46ba-b288-66fded1ff3ad",

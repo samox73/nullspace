@@ -27,6 +27,12 @@ your platform's data directory; set `NULLSPACE_DB` to use a custom path:
 NULLSPACE_DB=/path/to/library.sqlite3 cargo run -p nullspace-tui
 ```
 
+To launch a disposable demo library:
+
+```sh
+make demo
+```
+
 ## Keybindings
 
 ### Browser
@@ -36,19 +42,31 @@ NULLSPACE_DB=/path/to/library.sqlite3 cargo run -p nullspace-tui
 | `j` / `k` (or `↓` / `↑`) | Move selection |
 | `Enter` | Edit the selected equation |
 | `n` | New equation |
-| `c` | Copy the selected equation |
+| `c` | Clone the selected equation |
+| `y` | Copy the selected equation's LaTeX to the clipboard |
 | `d` | Delete the selected equation |
-| `/` | Search by name, description, LaTeX, or tag |
-| `v` | Look up equations by variable symbol |
+| `/` | Search |
 | `+` / `-` | Zoom the preview in / out |
 | `Esc` | Clear the active filter |
 | `q` / `Ctrl-C` | Quit |
+
+Search is broad by default and matches name, description, LaTeX, and tags.
+Prefix the query to narrow it:
+
+| Prefix | Matches |
+| --- | --- |
+| `tag:physics` | Tags |
+| `var:E` | Variable symbols and descriptions |
+| `name:gauss` | Equation names |
+| `latex:\pi` | LaTeX source |
+| `related:circle` | Equations related to matching equations |
 
 ### Editor
 
 | Key | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Next / previous field |
+| `Ctrl-S` | Save |
 | `Esc` | Back |
 
 In the **Related** field: `r` to choose equations from the library, `Enter` to open

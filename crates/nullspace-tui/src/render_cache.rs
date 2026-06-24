@@ -1,6 +1,8 @@
 use image::RgbaImage;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const RENDER_CACHE_VERSION: u32 = 1;
+static TEMP_FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn key(latex: &str, px: u32) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
@@ -47,7 +49,8 @@ pub fn store(latex: &str, px: u32, image: &RgbaImage) {
     let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
         return;
     };
-    let temp_path = path.with_file_name(format!("{filename}.tmp.{}", std::process::id()));
+    let nonce = TEMP_FILE_NONCE.fetch_add(1, Ordering::Relaxed);
+    let temp_path = path.with_file_name(format!("{filename}.tmp.{}.{}", std::process::id(), nonce));
     if image
         .save_with_format(&temp_path, image::ImageFormat::Png)
         .is_ok()

@@ -7,6 +7,10 @@ use image::RgbaImage;
 
 pub use unicode::to_unicode_approx;
 
+pub fn validate_latex(latex: &str) -> Result<(), String> {
+    ratex::validate(latex)
+}
+
 pub fn render_image(latex: &str, px_height: u32) -> Result<RgbaImage, String> {
     ratex::render(latex, px_height)
 }

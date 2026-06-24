@@ -56,6 +56,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     if version < 2 {
         migrate_v2(&tx)?;
     }
+    if version < 3 {
+        migrate_v3(&tx)?;
+    }
     tx.commit()?;
     Ok(())
 }
@@ -86,6 +89,24 @@ fn migrate_v2(conn: &Connection) -> Result<()> {
         [],
     )?;
     conn.pragma_update(None, "user_version", 2_i64)?;
+    Ok(())
+}
+
+fn migrate_v3(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "equations", "allow_duplicate_latex")? {
+        conn.execute(
+            "ALTER TABLE equations ADD COLUMN allow_duplicate_latex INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    conn.execute("DROP INDEX IF EXISTS idx_equations_latex_norm", [])?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_equations_latex_norm
+         ON equations(latex_norm)
+         WHERE allow_duplicate_latex = 0",
+        [],
+    )?;
+    conn.pragma_update(None, "user_version", 3_i64)?;
     Ok(())
 }
 

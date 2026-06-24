@@ -59,6 +59,7 @@ pub struct EquationSummary {
     pub name: String,
     pub description: String,
     pub latex: String,
+    pub unicode_approx: String,
     pub px_height: u32,
 }
 
