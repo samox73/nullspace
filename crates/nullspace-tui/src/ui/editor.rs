@@ -23,7 +23,7 @@ const PLACEHOLDERS: [&str; 7] = [
     "",
     "",
     "E = mc^2",
-    "Paper title | https://example.com",
+    "",
     "physics, relativity",
     "E = energy\nm = mass\nc = speed of light",
     "Mass energy equivalence, Euler identity",
@@ -32,7 +32,7 @@ const PLACEHOLDERS: [&str; 7] = [
 const MIN_TEXT_BOX_LINES: u16 = 1;
 const MAX_TEXT_BOX_LINES: u16 = 10;
 const BLOCK_CHROME_ROWS: u16 = 2;
-const MULTILINE_FIELDS: [usize; 4] = [1, 2, 3, 5];
+const MULTILINE_FIELDS: [usize; 3] = [1, 2, 5];
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
@@ -69,10 +69,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             } else {
                 Style::default()
             };
-            let title = if index == 6 {
-                "Related (up/down select, enter open, r edit)"
-            } else {
-                LABELS[index]
+            let title = match index {
+                3 => "References (a add, enter edit, d remove)",
+                6 => "Related (up/down select, enter open, r edit)",
+                _ => LABELS[index],
             };
             let block = Block::default()
                 .title(title)
@@ -82,6 +82,16 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 } else {
                     style
                 });
+            if index == 3 {
+                render_reference_field(
+                    frame,
+                    *area,
+                    block,
+                    &editor.references,
+                    editor.reference_cursor,
+                );
+                continue;
+            }
             if index == 6 {
                 render_related_field(
                     frame,
@@ -112,8 +122,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     if matches!(app.mode, Mode::RelatedPicker) {
         draw_related_picker(frame, app);
     }
+    if matches!(app.mode, Mode::ReferenceEditor) {
+        draw_reference_editor(frame, app);
+    }
     if let Mode::ConfirmRemoveRelated(id) = app.mode {
         draw_remove_related_confirm(frame, app, id);
+    }
+    if let Mode::ConfirmRemoveReference(index) = app.mode {
+        draw_remove_reference_confirm(frame, app, index);
     }
     widgets::status_bar(frame, outer[1], app);
 }
@@ -134,6 +150,7 @@ fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<C
     (0..7)
         .map(|index| match index {
             0 | 4 => Constraint::Length(3),
+            3 => Constraint::Length(reference_box_height(editor)),
             6 => Constraint::Min(3),
             _ if MULTILINE_FIELDS.contains(&index) => {
                 Constraint::Length(text_box_height(editor, index, width))
@@ -141,6 +158,11 @@ fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<C
             _ => Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
         })
         .collect()
+}
+
+fn reference_box_height(editor: &crate::app::EditorState) -> u16 {
+    let content = (editor.references.len() as u16).saturating_mul(2).max(2);
+    (content + BLOCK_CHROME_ROWS).min(MAX_TEXT_BOX_LINES + BLOCK_CHROME_ROWS)
 }
 
 fn text_box_height(editor: &crate::app::EditorState, index: usize, width: u16) -> u16 {
@@ -256,6 +278,114 @@ fn draw_remove_related_confirm(
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(format!("Remove \"{name}\" from related equations? (y/n)"))
+            .block(Block::default().title("Confirm").borders(Borders::ALL))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_reference_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    block: Block<'_>,
+    references: &[nullspace_core::Reference],
+    cursor: usize,
+) {
+    if references.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No references\n\nPress a to add one (title, authors, year, DOI/URL)")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(block)
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+    let items = references
+        .iter()
+        .map(|reference| {
+            let citation = nullspace_core::reference::format_citation(reference);
+            let link = nullspace_core::reference::reference_link(reference).unwrap_or_default();
+            ListItem::new(vec![
+                Line::from(citation),
+                Line::styled(link, Style::default().fg(Color::DarkGray)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    state.select(Some(cursor.min(items.len().saturating_sub(1))));
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_reference_editor(frame: &mut Frame<'_>, app: &mut AppState) {
+    let Some(editor) = &mut app.editor else {
+        return;
+    };
+    let area = centered_rect(70, 19, frame.area());
+    frame.render_widget(Clear, area);
+    let outer = Block::default().title("Reference").borders(Borders::ALL);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    for index in 0..5 {
+        let focused = editor.reference_form.focus == index;
+        let style = if focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let block = Block::default()
+            .title(crate::app::REFERENCE_FIELD_LABELS[index])
+            .borders(Borders::ALL)
+            .border_style(style);
+        editor.reference_form.fields[index].set_block(block);
+        editor.reference_form.fields[index].set_cursor_style(if focused {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        });
+        frame.render_widget(&editor.reference_form.fields[index], rows[index]);
+    }
+
+    let hint = match &editor.reference_form.error {
+        Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
+        None => Line::styled(
+            "tab next - shift-tab prev - enter save - esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ),
+    };
+    frame.render_widget(Paragraph::new(hint), rows[5]);
+}
+
+fn draw_remove_reference_confirm(frame: &mut Frame<'_>, app: &AppState, index: usize) {
+    let citation = app
+        .editor
+        .as_ref()
+        .and_then(|editor| editor.references.get(index))
+        .map(nullspace_core::reference::format_citation)
+        .unwrap_or_else(|| "this reference".to_string());
+    let area = centered_rect(60, 5, frame.area());
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(format!("Remove reference \"{citation}\"? (y/n)"))
             .block(Block::default().title("Confirm").borders(Borders::ALL))
             .wrap(Wrap { trim: false }),
         area,

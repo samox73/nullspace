@@ -39,5 +39,12 @@ pub enum Action {
     RelatedPickerApply,
     RelatedPickerCancel,
     RelatedPickerInput(crossterm::event::KeyEvent),
+    ReferenceEditorNextField,
+    ReferenceEditorPrevField,
+    ReferenceEditorSave,
+    ReferenceEditorCancel,
+    ReferenceEditorInput(crossterm::event::KeyEvent),
+    ConfirmReferenceRemoveYes,
+    ConfirmReferenceRemoveNo,
     None,
 }

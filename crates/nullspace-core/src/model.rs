@@ -34,7 +34,15 @@ pub struct Variable {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Reference {
-    pub text: String,
+    #[serde(default)]
+    pub authors: String,
+    #[serde(default)]
+    pub year: Option<i32>,
+    #[serde(alias = "text", default)]
+    pub title: String,
+    #[serde(default)]
+    pub doi: Option<String>,
+    #[serde(default)]
     pub url: Option<String>,
 }
 
@@ -79,5 +87,27 @@ impl Equation {
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+}
+
+#[cfg(test)]
+mod reference_compat_tests {
+    use super::Reference;
+
+    #[test]
+    fn reference_reads_legacy_text_field() {
+        let json =
+            r#"{"text":"Kohn & Sham 1965","url":"https://doi.org/10.1103/PhysRev.140.A1133"}"#;
+
+        let r: Reference = serde_json::from_str(json).unwrap();
+
+        assert_eq!(r.title, "Kohn & Sham 1965");
+        assert_eq!(
+            r.url.as_deref(),
+            Some("https://doi.org/10.1103/PhysRev.140.A1133")
+        );
+        assert!(r.authors.is_empty());
+        assert!(r.year.is_none());
+        assert!(r.doi.is_none());
     }
 }

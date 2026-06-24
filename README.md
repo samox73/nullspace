@@ -72,6 +72,12 @@ Prefix the query to narrow it:
 In the **Related** field: `r` to choose equations from the library, `Enter` to open
 the highlighted relation, `d` to remove it.
 
+In the **References** field: `a` to add a reference, `Enter` to edit the highlighted
+one, `d` to remove it, `j`/`k` or arrow keys to move. Each reference has authors,
+year, title, DOI, and URL fields; a bare DOI such as `10.1103/PhysRev.140.A1133`
+is automatically turned into a `https://doi.org/...` link. Existing libraries and
+JSON files using the old single-line reference format still import unchanged.
+
 ### Related picker
 
 Type to fuzzy-search, `Space` to toggle, `Enter` to apply, `Esc` to cancel.

@@ -34,7 +34,10 @@ CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 
 CREATE TABLE IF NOT EXISTS refs (
     equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
-    text        TEXT NOT NULL,
+    authors     TEXT NOT NULL DEFAULT '',
+    year        INTEGER,
+    title       TEXT NOT NULL DEFAULT '',
+    doi         TEXT,
     url         TEXT,
     position    INTEGER NOT NULL
 );
@@ -58,6 +61,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 3 {
         migrate_v3(&tx)?;
+    }
+    if version < 4 {
+        migrate_v4(&tx)?;
     }
     tx.commit()?;
     Ok(())
@@ -107,6 +113,32 @@ fn migrate_v3(conn: &Connection) -> Result<()> {
         [],
     )?;
     conn.pragma_update(None, "user_version", 3_i64)?;
+    Ok(())
+}
+
+fn migrate_v4(conn: &Connection) -> Result<()> {
+    // Old databases have refs(text, url, ...). Rebuild into the citation schema,
+    // mapping the old free-text `text` into the new `title` column.
+    if column_exists(conn, "refs", "text")? {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE refs_new (
+                equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                authors     TEXT NOT NULL DEFAULT '',
+                year        INTEGER,
+                title       TEXT NOT NULL DEFAULT '',
+                doi         TEXT,
+                url         TEXT,
+                position    INTEGER NOT NULL
+            );
+            INSERT INTO refs_new (equation_id, authors, year, title, doi, url, position)
+                SELECT equation_id, '', NULL, text, NULL, url, position FROM refs;
+            DROP TABLE refs;
+            ALTER TABLE refs_new RENAME TO refs;
+            "#,
+        )?;
+    }
+    conn.pragma_update(None, "user_version", 4_i64)?;
     Ok(())
 }
 

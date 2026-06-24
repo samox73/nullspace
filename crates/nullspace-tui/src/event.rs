@@ -46,6 +46,13 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmRelatedRemoveNo,
             _ => Action::None,
         },
+        Mode::ConfirmRemoveReference(_) => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => {
+                Action::ConfirmReferenceRemoveYes
+            }
+            KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmReferenceRemoveNo,
+            _ => Action::None,
+        },
         Mode::RelatedPicker => match key.code {
             KeyCode::Esc => Action::RelatedPickerCancel,
             KeyCode::Tab | KeyCode::BackTab => Action::RelatedPickerToggleFocus,
@@ -77,6 +84,18 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
                 KeyCode::Home => Action::EditorHome,
                 KeyCode::End => Action::EditorEnd,
                 _ => Action::EditorInput(key),
+            }
+        }
+        Mode::ReferenceEditor => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+                return Action::ReferenceEditorSave;
+            }
+            match key.code {
+                KeyCode::Esc => Action::ReferenceEditorCancel,
+                KeyCode::Enter => Action::ReferenceEditorSave,
+                KeyCode::Tab => Action::ReferenceEditorNextField,
+                KeyCode::BackTab => Action::ReferenceEditorPrevField,
+                _ => Action::ReferenceEditorInput(key),
             }
         }
     }

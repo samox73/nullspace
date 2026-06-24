@@ -245,8 +245,10 @@ pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Mode::Search => "tag: var: name: latex: related:  enter apply  esc clear",
         Mode::Editor => "tab field  esc back",
         Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
+        Mode::ReferenceEditor => "tab/shift-tab field  enter save  esc cancel",
         Mode::ConfirmDelete(_) => "y/d/enter confirm  n/esc cancel",
         Mode::ConfirmRemoveRelated(_) => "y remove relation  n/esc cancel",
+        Mode::ConfirmRemoveReference(_) => "y/enter remove  n/esc cancel",
     };
     let graphics = if app.graphics_ok {
         " | terminal graphics detected"

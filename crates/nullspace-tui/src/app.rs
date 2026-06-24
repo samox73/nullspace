@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use image::RgbaImage;
+use nullspace_core::reference::normalize_doi;
 use nullspace_core::{
     render::validate_latex, Equation, EquationId, EquationSummary, Reference, Store, Variable,
 };
@@ -37,8 +38,10 @@ pub enum Mode {
     Search,
     Editor,
     RelatedPicker,
+    ReferenceEditor,
     ConfirmDelete(EquationId),
     ConfirmRemoveRelated(EquationId),
+    ConfirmRemoveReference(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +56,9 @@ pub struct EditorState {
     pub fields: [TextArea<'static>; 7],
     pub focus: usize,
     pub related_cursor: usize,
+    pub reference_cursor: usize,
+    pub references: Vec<Reference>,
+    pub reference_form: ReferenceForm,
     pub dirty: bool,
     pub last_change: Instant,
     pub last_saved_signature: String,
@@ -71,6 +77,47 @@ impl EditorState {
 
     fn set_field_text(&mut self, index: usize, text: String) {
         set_textarea_text(&mut self.fields[index], text);
+    }
+}
+
+pub const REFERENCE_FIELD_LABELS: [&str; 5] = ["Authors", "Year", "Title", "DOI", "URL"];
+
+#[derive(Clone)]
+pub struct ReferenceForm {
+    pub fields: [TextArea<'static>; 5],
+    pub focus: usize,
+    pub editing: Option<usize>,
+    pub error: Option<String>,
+}
+
+impl ReferenceForm {
+    fn empty() -> Self {
+        Self {
+            fields: std::array::from_fn(|_| textarea_from_text("")),
+            focus: 0,
+            editing: None,
+            error: None,
+        }
+    }
+
+    fn from_reference(reference: &Reference, index: usize) -> Self {
+        let values = [
+            reference.authors.clone(),
+            reference.year.map(|y| y.to_string()).unwrap_or_default(),
+            reference.title.clone(),
+            reference.doi.clone().unwrap_or_default(),
+            reference.url.clone().unwrap_or_default(),
+        ];
+        Self {
+            fields: values.each_ref().map(|value| textarea_from_text(value)),
+            focus: 0,
+            editing: Some(index),
+            error: None,
+        }
+    }
+
+    fn field_text(&self, index: usize) -> String {
+        textarea_text(&self.fields[index])
     }
 }
 
@@ -280,7 +327,7 @@ impl AppState {
     }
 
     pub fn cursor_visible(&self) -> bool {
-        (self.last_change.elapsed().as_millis() / 200) % 2 == 0
+        (self.last_change.elapsed().as_millis() / 200).is_multiple_of(2)
     }
 
     fn refresh_items(&mut self) -> anyhow::Result<()> {
@@ -446,6 +493,17 @@ impl AppState {
                 self.mode = Mode::Editor;
                 Ok(())
             }
+            Action::ConfirmReferenceRemoveYes => {
+                if let Mode::ConfirmRemoveReference(index) = self.mode {
+                    self.remove_reference(index);
+                    self.mode = Mode::Editor;
+                }
+                Ok(())
+            }
+            Action::ConfirmReferenceRemoveNo => {
+                self.mode = Mode::Editor;
+                Ok(())
+            }
             Action::OpenCurrent => {
                 if let Some(id) = self.selected_id() {
                     self.editor_history.clear();
@@ -465,6 +523,8 @@ impl AppState {
                 self.mode = match self.mode {
                     Mode::ConfirmDelete(_) => Mode::Browser,
                     Mode::ConfirmRemoveRelated(_) => Mode::Editor,
+                    Mode::ConfirmRemoveReference(_) => Mode::Editor,
+                    Mode::ReferenceEditor => Mode::Editor,
                     Mode::Editor | Mode::RelatedPicker => {
                         if matches!(self.mode, Mode::Editor)
                             && self.editor.as_ref().is_some_and(|editor| editor.dirty)
@@ -502,7 +562,7 @@ impl AppState {
             }
             Action::EditorMoveLeft => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 {
+                    if editor.focus != 6 && editor.focus != 3 {
                         editor.fields[editor.focus].move_cursor(CursorMove::Back);
                     }
                 }
@@ -510,7 +570,7 @@ impl AppState {
             }
             Action::EditorMoveRight => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 {
+                    if editor.focus != 6 && editor.focus != 3 {
                         editor.fields[editor.focus].move_cursor(CursorMove::Forward);
                     }
                 }
@@ -518,7 +578,7 @@ impl AppState {
             }
             Action::EditorHome => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 {
+                    if editor.focus != 6 && editor.focus != 3 {
                         editor.fields[editor.focus].move_cursor(CursorMove::Head);
                     }
                 }
@@ -526,7 +586,7 @@ impl AppState {
             }
             Action::EditorEnd => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 {
+                    if editor.focus != 6 && editor.focus != 3 {
                         editor.fields[editor.focus].move_cursor(CursorMove::End);
                     }
                 }
@@ -534,25 +594,26 @@ impl AppState {
             }
             Action::EditorRelatedMoveUp => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus == 6 {
-                        editor.related_cursor = editor.related_cursor.saturating_sub(1);
-                    } else {
-                        editor.fields[editor.focus].move_cursor(CursorMove::Up);
+                    match editor.focus {
+                        6 => editor.related_cursor = editor.related_cursor.saturating_sub(1),
+                        3 => editor.reference_cursor = editor.reference_cursor.saturating_sub(1),
+                        focus => editor.fields[focus].move_cursor(CursorMove::Up),
                     }
                 }
                 Ok(())
             }
             Action::EditorRelatedMoveDown => {
-                let max = self
-                    .editor
-                    .as_ref()
-                    .map(|editor| editor.related.len().saturating_sub(1))
-                    .unwrap_or(0);
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus == 6 {
-                        editor.related_cursor = (editor.related_cursor + 1).min(max);
-                    } else {
-                        editor.fields[editor.focus].move_cursor(CursorMove::Down);
+                    match editor.focus {
+                        6 => {
+                            let max = editor.related.len().saturating_sub(1);
+                            editor.related_cursor = (editor.related_cursor + 1).min(max);
+                        }
+                        3 => {
+                            let max = editor.references.len().saturating_sub(1);
+                            editor.reference_cursor = (editor.reference_cursor + 1).min(max);
+                        }
+                        focus => editor.fields[focus].move_cursor(CursorMove::Down),
                     }
                 }
                 Ok(())
@@ -589,6 +650,26 @@ impl AppState {
             }
             Action::RelatedPickerInput(key) => {
                 self.input_related_picker(key);
+                Ok(())
+            }
+            Action::ReferenceEditorNextField => {
+                self.reference_form_next_field();
+                Ok(())
+            }
+            Action::ReferenceEditorPrevField => {
+                self.reference_form_prev_field();
+                Ok(())
+            }
+            Action::ReferenceEditorSave => {
+                self.save_reference_form();
+                Ok(())
+            }
+            Action::ReferenceEditorCancel => {
+                self.mode = Mode::Editor;
+                Ok(())
+            }
+            Action::ReferenceEditorInput(key) => {
+                self.input_reference_form(key);
                 Ok(())
             }
             Action::None => Ok(()),
@@ -850,7 +931,11 @@ impl AppState {
     fn schedule_selected_inner(&mut self, immediate: bool) {
         let in_editor = matches!(
             self.mode,
-            Mode::Editor | Mode::RelatedPicker | Mode::ConfirmRemoveRelated(_)
+            Mode::Editor
+                | Mode::RelatedPicker
+                | Mode::ConfirmRemoveRelated(_)
+                | Mode::ReferenceEditor
+                | Mode::ConfirmRemoveReference(_)
         );
         let latex = if in_editor {
             self.editor
@@ -886,7 +971,11 @@ impl AppState {
         self.preview_px = px;
         self.preview_preserve_on_error = matches!(
             self.mode,
-            Mode::Editor | Mode::RelatedPicker | Mode::ConfirmRemoveRelated(_)
+            Mode::Editor
+                | Mode::RelatedPicker
+                | Mode::ConfirmRemoveRelated(_)
+                | Mode::ReferenceEditor
+                | Mode::ConfirmRemoveReference(_)
         );
         self.generation = self.generation.saturating_add(1);
         self.last_change = Instant::now();
@@ -1083,12 +1172,16 @@ impl AppState {
             .as_ref()
             .map(|eq| eq.related.clone())
             .unwrap_or_default();
+        let initial_references = equation
+            .as_ref()
+            .map(|eq| eq.references.clone())
+            .unwrap_or_default();
         let field_values = if let Some(eq) = equation {
             [
                 eq.name,
                 eq.description,
                 eq.latex,
-                format_refs(&eq.references),
+                String::new(),
                 eq.tags.join(", "),
                 format_variables(&eq.variables),
                 format_related(&initial_related, &self.all_items),
@@ -1109,10 +1202,17 @@ impl AppState {
             .map(|value| textarea_from_text(value));
         self.editor = Some(EditorState {
             editing: id,
-            last_saved_signature: fields_signature(&field_values, &initial_related),
+            last_saved_signature: fields_signature(
+                &field_values,
+                &initial_related,
+                &initial_references,
+            ),
             fields,
             focus: 0,
             related_cursor: 0,
+            reference_cursor: 0,
+            references: initial_references,
+            reference_form: ReferenceForm::empty(),
             dirty: false,
             last_change: Instant::now(),
             related_picker: RelatedPickerState {
@@ -1141,6 +1241,25 @@ impl AppState {
                 self.open_related_picker();
                 return;
             }
+            KeyCode::Char('a') if focused == 3 => {
+                self.open_reference_form(None);
+                return;
+            }
+            KeyCode::Char('k') if focused == 3 => {
+                editor.reference_cursor = editor.reference_cursor.saturating_sub(1);
+                return;
+            }
+            KeyCode::Char('j') if focused == 3 => {
+                let max = editor.references.len().saturating_sub(1);
+                editor.reference_cursor = (editor.reference_cursor + 1).min(max);
+                return;
+            }
+            KeyCode::Char('d') if focused == 3 => {
+                if let Some(idx) = self.current_reference_index() {
+                    self.mode = Mode::ConfirmRemoveReference(idx);
+                }
+                return;
+            }
             KeyCode::Char('k') if focused == 6 => {
                 editor.related_cursor = editor.related_cursor.saturating_sub(1);
                 return;
@@ -1157,11 +1276,17 @@ impl AppState {
                 return;
             }
             KeyCode::Enter if matches!(focused, 0 | 4) => return,
+            KeyCode::Enter if focused == 3 => {
+                if let Some(idx) = self.current_reference_index() {
+                    self.open_reference_form(Some(idx));
+                }
+                return;
+            }
             KeyCode::Enter if focused == 6 => {
                 self.open_selected_related_detail();
                 return;
             }
-            _ if focused != 6 && editor.fields[focused].input(key) => {}
+            _ if focused != 6 && focused != 3 && editor.fields[focused].input(key) => {}
             _ => return,
         }
         mark_editor_dirty(editor);
@@ -1201,6 +1326,122 @@ impl AppState {
             .min(editor.related_picker.cursor);
         self.mode = Mode::RelatedPicker;
         self.schedule_related_picker_preview();
+    }
+
+    fn current_reference_index(&self) -> Option<usize> {
+        let editor = self.editor.as_ref()?;
+        if editor.focus != 3 || editor.references.is_empty() {
+            return None;
+        }
+        Some(editor.reference_cursor.min(editor.references.len() - 1))
+    }
+
+    fn open_reference_form(&mut self, index: Option<usize>) {
+        let form = {
+            let Some(editor) = self.editor.as_ref() else {
+                return;
+            };
+            match index {
+                Some(i) if i < editor.references.len() => {
+                    ReferenceForm::from_reference(&editor.references[i], i)
+                }
+                _ => ReferenceForm::empty(),
+            }
+        };
+        if let Some(editor) = self.editor.as_mut() {
+            editor.reference_form = form;
+        }
+        self.mode = Mode::ReferenceEditor;
+    }
+
+    fn input_reference_form(&mut self, key: crossterm::event::KeyEvent) {
+        if let Some(editor) = &mut self.editor {
+            let focus = editor.reference_form.focus;
+            editor.reference_form.fields[focus].input(key);
+            editor.reference_form.error = None;
+        }
+    }
+
+    fn reference_form_next_field(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            let n = editor.reference_form.fields.len();
+            editor.reference_form.focus = (editor.reference_form.focus + 1) % n;
+        }
+    }
+
+    fn reference_form_prev_field(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            let n = editor.reference_form.fields.len();
+            editor.reference_form.focus = (editor.reference_form.focus + n - 1) % n;
+        }
+    }
+
+    fn save_reference_form(&mut self) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let authors = editor.reference_form.field_text(0).trim().to_string();
+        let year_raw = editor.reference_form.field_text(1).trim().to_string();
+        let title = editor.reference_form.field_text(2).trim().to_string();
+        let doi_raw = editor.reference_form.field_text(3).trim().to_string();
+        let url_raw = editor.reference_form.field_text(4).trim().to_string();
+
+        if title.is_empty() && authors.is_empty() {
+            editor.reference_form.error = Some("Enter at least a title or authors".to_string());
+            return;
+        }
+        let year = if year_raw.is_empty() {
+            None
+        } else {
+            match year_raw.parse::<i32>() {
+                Ok(y) => Some(y),
+                Err(_) => {
+                    editor.reference_form.error = Some("Year must be a number".to_string());
+                    return;
+                }
+            }
+        };
+
+        let (doi, url) = if !doi_raw.is_empty() {
+            let doi = normalize_doi(&doi_raw).unwrap_or(doi_raw);
+            let url = (!url_raw.is_empty()).then_some(url_raw);
+            (Some(doi), url)
+        } else if let Some(doi) = normalize_doi(&url_raw) {
+            (Some(doi), None)
+        } else {
+            (None, (!url_raw.is_empty()).then_some(url_raw))
+        };
+
+        let reference = Reference {
+            authors,
+            year,
+            title,
+            doi,
+            url,
+        };
+        let editing = editor.reference_form.editing;
+        match editing {
+            Some(i) if i < editor.references.len() => editor.references[i] = reference,
+            _ => editor.references.push(reference),
+        }
+        editor.reference_cursor = match editing {
+            Some(i) => i.min(editor.references.len().saturating_sub(1)),
+            None => editor.references.len().saturating_sub(1),
+        };
+        mark_editor_dirty(editor);
+        self.mode = Mode::Editor;
+    }
+
+    fn remove_reference(&mut self, index: usize) {
+        if let Some(editor) = &mut self.editor {
+            if index < editor.references.len() {
+                editor.references.remove(index);
+                editor.reference_cursor = editor
+                    .reference_cursor
+                    .min(editor.references.len().saturating_sub(1));
+                mark_editor_dirty(editor);
+            }
+        }
     }
 
     fn schedule_related_picker_preview(&mut self) {
@@ -1511,13 +1752,14 @@ impl AppState {
         let editing = editor.editing;
         let last_saved_signature = editor.last_saved_signature.clone();
         let related_ids = editor.related.clone();
+        let references = editor.references.clone();
         if fields[0].trim().is_empty() {
             return Ok(());
         }
         if fields[2].trim().is_empty() {
             return Ok(());
         }
-        let signature = fields_signature(&fields, &related_ids);
+        let signature = fields_signature(&fields, &related_ids, &references);
         if signature == last_saved_signature {
             if let Some(editor) = &mut self.editor {
                 editor.dirty = false;
@@ -1533,7 +1775,7 @@ impl AppState {
         equation.name = fields[0].trim().to_string();
         equation.description = fields[1].trim().to_string();
         equation.latex = fields[2].trim().to_string();
-        equation.references = parse_refs(&fields[3]);
+        equation.references = references.clone();
         equation.tags = {
             let mut seen = std::collections::HashSet::new();
             fields[4]
@@ -1702,74 +1944,6 @@ fn textarea_text(textarea: &TextArea<'_>) -> String {
     textarea.lines().join("\n")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{fuzzy_matches_item, textarea_from_text, textarea_lines, textarea_text};
-    use nullspace_core::{EquationId, EquationSummary};
-
-    #[test]
-    fn textarea_round_trips_multiline_text() {
-        let text = "a\nb\nc";
-        let textarea = textarea_from_text(text);
-        assert_eq!(textarea_text(&textarea), text);
-    }
-
-    #[test]
-    fn textarea_lines_preserve_trailing_empty_line() {
-        assert_eq!(textarea_lines("a\n"), ["a".to_string(), String::new()]);
-    }
-
-    #[test]
-    fn related_picker_search_matches_name_or_latex_only() {
-        let description_only = EquationSummary {
-            id: EquationId::new(),
-            name: "BCS gap relation".to_string(),
-            description: "Mentions Debye in prose".to_string(),
-            latex: "\\Delta = 1.76 k_B T_c".to_string(),
-            unicode_approx: "Δ = 1.76 k_B T_c".to_string(),
-            px_height: 48,
-        };
-        let actual_match = EquationSummary {
-            id: EquationId::new(),
-            name: "Debye heat capacity".to_string(),
-            description: "Low-temperature lattice heat capacity".to_string(),
-            latex: "C_V = \\beta T^3".to_string(),
-            unicode_approx: "C_V = β T³".to_string(),
-            px_height: 48,
-        };
-
-        assert!(!fuzzy_matches_item("Debye", &description_only));
-        assert!(fuzzy_matches_item("Debye", &actual_match));
-    }
-}
-
-fn format_refs(references: &[Reference]) -> String {
-    references
-        .iter()
-        .map(|reference| match &reference.url {
-            Some(url) if !url.is_empty() => format!("{} | {}", reference.text, url),
-            _ => reference.text.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn parse_refs(raw: &str) -> Vec<Reference> {
-    raw.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut parts = line.splitn(2, '|').map(str::trim);
-            let text = parts.next().unwrap_or_default().to_string();
-            let url = parts
-                .next()
-                .filter(|url| !url.is_empty())
-                .map(ToOwned::to_owned);
-            Reference { text, url }
-        })
-        .collect()
-}
-
 fn format_variables(variables: &[Variable]) -> String {
     variables
         .iter()
@@ -1803,13 +1977,36 @@ fn format_related(related: &[EquationId], items: &[EquationSummary]) -> String {
         .join(", ")
 }
 
-fn fields_signature(fields: &[String; 7], related: &[EquationId]) -> String {
+fn fields_signature(
+    fields: &[String; 7],
+    related: &[EquationId],
+    references: &[Reference],
+) -> String {
     let related_part = related
         .iter()
         .map(|id| id.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    format!("{}\u{1f}{}", fields.join("\u{1f}"), related_part)
+    let references_part = references
+        .iter()
+        .map(|r| {
+            format!(
+                "{}|{}|{}|{}|{}",
+                r.authors,
+                r.year.map(|y| y.to_string()).unwrap_or_default(),
+                r.title,
+                r.doi.clone().unwrap_or_default(),
+                r.url.clone().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        fields.join("\u{1f}"),
+        related_part,
+        references_part
+    )
 }
 
 fn mark_editor_dirty(editor: &mut EditorState) {
@@ -1874,4 +2071,45 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
         .nth(1)
         .map(|(index, _)| cursor + index)
         .unwrap_or(value.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fuzzy_matches_item, textarea_from_text, textarea_lines, textarea_text};
+    use nullspace_core::{EquationId, EquationSummary};
+
+    #[test]
+    fn textarea_round_trips_multiline_text() {
+        let text = "a\nb\nc";
+        let textarea = textarea_from_text(text);
+        assert_eq!(textarea_text(&textarea), text);
+    }
+
+    #[test]
+    fn textarea_lines_preserve_trailing_empty_line() {
+        assert_eq!(textarea_lines("a\n"), ["a".to_string(), String::new()]);
+    }
+
+    #[test]
+    fn related_picker_search_matches_name_or_latex_only() {
+        let description_only = EquationSummary {
+            id: EquationId::new(),
+            name: "BCS gap relation".to_string(),
+            description: "Mentions Debye in prose".to_string(),
+            latex: "\\Delta = 1.76 k_B T_c".to_string(),
+            unicode_approx: "Δ = 1.76 k_B T_c".to_string(),
+            px_height: 48,
+        };
+        let actual_match = EquationSummary {
+            id: EquationId::new(),
+            name: "Debye heat capacity".to_string(),
+            description: "Low-temperature lattice heat capacity".to_string(),
+            latex: "C_V = \\beta T^3".to_string(),
+            unicode_approx: "C_V = β T³".to_string(),
+            px_height: 48,
+        };
+
+        assert!(!fuzzy_matches_item("Debye", &description_only));
+        assert!(fuzzy_matches_item("Debye", &actual_match));
+    }
 }

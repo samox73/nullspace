@@ -356,13 +356,16 @@ impl Store {
     }
 
     fn load_refs(&self, id: &str) -> Result<Vec<Reference>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT text, url FROM refs WHERE equation_id=?1 ORDER BY position")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT authors, year, title, doi, url FROM refs WHERE equation_id=?1 ORDER BY position",
+        )?;
         let rows = stmt.query_map(params![id], |row| {
             Ok(Reference {
-                text: row.get(0)?,
-                url: row.get(1)?,
+                authors: row.get(0)?,
+                year: row.get(1)?,
+                title: row.get(2)?,
+                doi: row.get(3)?,
+                url: row.get(4)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -509,8 +512,17 @@ fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
     }
     for (position, reference) in eq.references.iter().enumerate() {
         conn.execute(
-            "INSERT INTO refs (equation_id, text, url, position) VALUES (?1, ?2, ?3, ?4)",
-            params![id, reference.text, reference.url, position as i64],
+            "INSERT INTO refs (equation_id, authors, year, title, doi, url, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                reference.authors,
+                reference.year,
+                reference.title,
+                reference.doi,
+                reference.url,
+                position as i64
+            ],
         )?;
     }
     for related in &eq.related {
@@ -606,7 +618,10 @@ mod tests {
         ];
         eq.tags = vec!["physics".to_string(), "relativity".to_string()];
         eq.references = vec![Reference {
-            text: "Einstein".to_string(),
+            authors: "Einstein".to_string(),
+            year: Some(1905),
+            title: "Annalen der Physik".to_string(),
+            doi: None,
             url: Some("https://example.test".to_string()),
         }];
         eq
@@ -1105,5 +1120,57 @@ mod tests {
         assert_eq!(duplicate_count, 0);
         assert_eq!(relation_count, 1);
         assert_eq!(index_count, 1);
+    }
+
+    #[test]
+    fn migration_v4_upgrades_refs_to_citation_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        conn.execute_batch(
+            r#"
+        CREATE TABLE equations (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+            latex TEXT NOT NULL, latex_norm TEXT NOT NULL DEFAULT '',
+            px_height INTEGER NOT NULL DEFAULT 48,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            allow_duplicate_latex INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE refs (
+            equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+            text TEXT NOT NULL, url TEXT, position INTEGER NOT NULL
+        );
+        PRAGMA user_version = 3;
+        "#,
+        )
+        .unwrap();
+        let id = EquationId::new().to_string();
+        conn.execute(
+            "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at)
+             VALUES (?1, 'n', '', 'x', '', 48, 't', 't')",
+            params![id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO refs (equation_id, text, url, position)
+             VALUES (?1, 'Kohn & Sham 1965', 'https://doi.org/10.1103/PhysRev.140.A1133', 0)",
+            params![id],
+        )
+        .unwrap();
+
+        migrations::migrate(&conn).unwrap();
+
+        let (title, url, authors): (String, Option<String>, String) = conn
+            .query_row(
+                "SELECT title, url, authors FROM refs WHERE equation_id=?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "Kohn & Sham 1965");
+        assert_eq!(
+            url.as_deref(),
+            Some("https://doi.org/10.1103/PhysRev.140.A1133")
+        );
+        assert_eq!(authors, "");
     }
 }
