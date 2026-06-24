@@ -106,7 +106,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             frame.render_widget(&editor.fields[index], *area);
         }
     }
-    widgets::preview_pane(frame, panes[1], app, "Live preview");
+    if !matches!(app.mode, Mode::RelatedPicker) {
+        widgets::preview_pane(frame, panes[1], app, "Live preview");
+    }
     if matches!(app.mode, Mode::RelatedPicker) {
         draw_related_picker(frame, app);
     }
