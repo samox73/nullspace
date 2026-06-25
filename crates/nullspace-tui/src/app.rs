@@ -18,8 +18,7 @@ use crate::protocol_warm_worker::{
     ProtocolWarmWorker,
 };
 use crate::render_cache;
-use crate::render_worker::{RenderJob, RenderResult, RenderWorker};
-use crate::warm_worker::{WarmJob, WarmOutcome, WarmResult, WarmWorker};
+use crate::render_queue::{QueueJob, QueueResult, RenderQueue};
 
 const IMAGE_CACHE_CAPACITY: usize = 128;
 // Comfortably exceeds 2 * WARM_RADIUS so neighbours pre-encoded for both scroll
@@ -29,8 +28,7 @@ const WARM_RADIUS: usize = 8;
 const RELATED_PICKER_PREVIEW_PX: u32 = 512;
 const RESULT_PULL_LIMIT: usize = 64;
 const PROTOCOL_RESULTS_PER_TICK: usize = 16;
-const WARM_RESULTS_PER_TICK: usize = 3;
-const RENDER_RESULTS_PER_TICK: usize = 2;
+const QUEUE_RESULTS_PER_TICK: usize = 4;
 const RESULT_TICK_BUDGET: Duration = Duration::from_millis(4);
 const MIN_RENDER_PX: u32 = 16;
 const MAX_RENDER_PX: u32 = 512;
@@ -189,25 +187,23 @@ pub struct AppState {
     pub preview_preserve_on_error: bool,
     pub notification: Option<Notification>,
     editor_history: Vec<EditorState>,
-    worker: RenderWorker,
-    warm_worker: WarmWorker,
+    render_queue: RenderQueue,
     protocol_warm_worker: ProtocolWarmWorker,
     pending_protocol_results: VecDeque<ProtocolWarmResult>,
-    pending_warm_results: VecDeque<WarmResult>,
-    pending_render_results: VecDeque<RenderResult>,
+    pending_queue_results: VecDeque<QueueResult>,
     generation: u64,
     dispatched_generation: u64,
     last_change: Instant,
     cache: HashMap<u64, RgbaImage>,
     cache_order: VecDeque<u64>,
-    warm_inflight: HashSet<u64>,
-    warm_failed: HashSet<u64>,
+    queued_keys: HashSet<u64>,
+    render_failed: HashSet<u64>,
+    needs_warm_submit: bool,
     protocol_warm_inflight: HashMap<u64, Size>,
     protocol_cache: HashMap<u64, StatefulProtocol>,
     protocol_cache_order: VecDeque<u64>,
     preview_cache_key: u64,
     preview_warm_size: Option<Size>,
-    render_inflight_key: Option<u64>,
     graphics: Graphics,
 }
 
@@ -259,25 +255,23 @@ impl AppState {
             preview_preserve_on_error: false,
             notification: None,
             editor_history: Vec::new(),
-            worker: RenderWorker::spawn(),
-            warm_worker: WarmWorker::spawn(),
+            render_queue: RenderQueue::spawn(),
             protocol_warm_worker: ProtocolWarmWorker::spawn(),
             pending_protocol_results: VecDeque::new(),
-            pending_warm_results: VecDeque::new(),
-            pending_render_results: VecDeque::new(),
+            pending_queue_results: VecDeque::new(),
             generation: 0,
             dispatched_generation: 0,
             last_change: Instant::now(),
             cache: HashMap::new(),
             cache_order: VecDeque::new(),
-            warm_inflight: HashSet::new(),
-            warm_failed: HashSet::new(),
+            queued_keys: HashSet::new(),
+            render_failed: HashSet::new(),
+            needs_warm_submit: false,
             protocol_warm_inflight: HashMap::new(),
             protocol_cache: HashMap::new(),
             protocol_cache_order: VecDeque::new(),
             preview_cache_key: 0,
             preview_warm_size: None,
-            render_inflight_key: None,
             graphics,
         };
         app.reload()?;
@@ -338,9 +332,8 @@ impl AppState {
 
     pub fn cache_status_for(&self, latex: &str, px: u32) -> CacheStatus {
         let key = render_cache::key(latex, self.effective_render_px(px));
-        if self.warm_inflight.contains(&key)
+        if self.queued_keys.contains(&key)
             || self.protocol_warm_inflight.contains_key(&key)
-            || self.render_inflight_key == Some(key)
             || (key == self.preview_cache_key && self.generation != self.dispatched_generation)
         {
             CacheStatus::Loading
@@ -742,22 +735,34 @@ impl AppState {
         self.collect_worker_results();
         self.process_current_preview_results();
         self.process_protocol_results(started);
-        self.process_warm_results(started);
-        self.process_render_results(started);
+        self.process_queue_results(started);
 
         if self.generation != self.dispatched_generation
             && self.last_change.elapsed() >= Duration::from_millis(150)
         {
-            self.worker.send(RenderJob {
-                generation: self.generation,
-                latex: self.preview_latex.clone(),
-                px: self.preview_render_px,
-            });
-            self.render_inflight_key = Some(render_cache::key(
-                &self.preview_latex,
-                self.preview_render_px,
-            ));
-            self.dispatched_generation = self.generation;
+            let new_key = render_cache::key(&self.preview_latex, self.preview_render_px);
+            if let Some(display) = self.cache.get(&new_key).cloned() {
+                if self.queue_current_protocol_warm(new_key, display) {
+                    self.preview_error = None;
+                    self.dispatched_generation = self.generation;
+                }
+            } else {
+                self.submit_to_queue(
+                    new_key,
+                    self.preview_latex.clone(),
+                    self.preview_render_px,
+                    0,
+                );
+                self.dispatched_generation = self.generation;
+            }
+        }
+
+        if self.needs_warm_submit
+            && matches!(self.mode, Mode::Browser | Mode::Search)
+            && self.last_change.elapsed() >= Duration::from_millis(100)
+        {
+            self.schedule_warm_neighbors();
+            self.needs_warm_submit = false;
         }
 
         if matches!(self.mode, Mode::Editor)
@@ -782,16 +787,10 @@ impl AppState {
             self.pending_protocol_results.push_back(result);
         }
         for _ in 0..RESULT_PULL_LIMIT {
-            let Some(result) = self.warm_worker.try_recv() else {
+            let Some(result) = self.render_queue.try_recv() else {
                 break;
             };
-            self.pending_warm_results.push_back(result);
-        }
-        for _ in 0..RESULT_PULL_LIMIT {
-            let Some(result) = self.worker.try_recv() else {
-                break;
-            };
-            self.pending_render_results.push_back(result);
+            self.pending_queue_results.push_back(result);
         }
     }
 
@@ -807,21 +806,12 @@ impl AppState {
             }
         }
         if let Some(index) = self
-            .pending_warm_results
+            .pending_queue_results
             .iter()
-            .position(|result| warm_result_key(result) == Some(preview_key))
+            .position(|result| result.key == preview_key)
         {
-            if let Some(result) = self.pending_warm_results.remove(index) {
-                self.handle_warm_result(result);
-            }
-        }
-        if let Some(index) = self
-            .pending_render_results
-            .iter()
-            .position(|result| render_cache::key(&result.latex, result.px) == preview_key)
-        {
-            if let Some(result) = self.pending_render_results.remove(index) {
-                self.handle_render_result(result);
+            if let Some(result) = self.pending_queue_results.remove(index) {
+                self.handle_queue_result(result);
             }
         }
     }
@@ -838,27 +828,15 @@ impl AppState {
         }
     }
 
-    fn process_warm_results(&mut self, started: Instant) {
-        for _ in 0..WARM_RESULTS_PER_TICK {
+    fn process_queue_results(&mut self, started: Instant) {
+        for _ in 0..QUEUE_RESULTS_PER_TICK {
             if result_budget_spent(started) {
                 break;
             }
-            let Some(result) = self.pending_warm_results.pop_front() else {
+            let Some(result) = self.pending_queue_results.pop_front() else {
                 break;
             };
-            self.handle_warm_result(result);
-        }
-    }
-
-    fn process_render_results(&mut self, started: Instant) {
-        for _ in 0..RENDER_RESULTS_PER_TICK {
-            if result_budget_spent(started) {
-                break;
-            }
-            let Some(result) = self.pending_render_results.pop_front() else {
-                break;
-            };
-            self.handle_render_result(result);
+            self.handle_queue_result(result);
         }
     }
 
@@ -907,85 +885,44 @@ impl AppState {
         }
     }
 
-    fn handle_warm_result(&mut self, result: WarmResult) {
-        match result.outcome {
-            WarmOutcome::Ready { latex, px, image } => {
-                let key = render_cache::key(&latex, px);
-                self.warm_inflight.remove(&key);
-                match image {
-                    Ok(raw) => {
-                        let display = self.graphics.recolor(raw);
-                        // Encode off-thread — the active preview at priority, neighbours as
-                        // background work — so landing on a neighbour finds its protocol
-                        // already cached instead of re-rendering. The pixel scan for vertical
-                        // centering runs in the worker, never on the UI thread.
-                        let priority =
-                            key == self.preview_cache_key && self.preview_protocol.is_none();
-                        self.queue_protocol_warm_inner(key, display.clone(), priority);
-                        self.remember_cache(key, display);
-                    }
-                    Err(_) => {
-                        self.warm_failed.insert(key);
-                    }
-                }
-            }
-            WarmOutcome::Skipped(jobs) => {
-                for job in jobs {
-                    self.warm_inflight
-                        .remove(&render_cache::key(&job.latex, job.px));
-                }
-            }
+    fn submit_to_queue(&mut self, key: u64, latex: String, px: u32, priority: u8) {
+        if self.queued_keys.contains(&key) || self.render_failed.contains(&key) {
+            return;
         }
+        self.render_queue.submit(QueueJob { key, latex, px, priority });
+        self.queued_keys.insert(key);
     }
 
-    fn handle_render_result(&mut self, result: RenderResult) {
-        let key = render_cache::key(&result.latex, result.px);
-        if self.render_inflight_key == Some(key) {
-            self.render_inflight_key = None;
-        }
-        let is_current_generation = result.generation >= self.generation;
-        let is_current_preview = key == self.preview_cache_key;
+    fn handle_queue_result(&mut self, result: QueueResult) {
+        self.queued_keys.remove(&result.key);
+        let is_current = result.key == self.preview_cache_key;
         match result.image {
+            Err(err) => {
+                self.render_failed.insert(result.key);
+                if is_current {
+                    self.preview_error = Some(err);
+                    if !self.preview_preserve_on_error {
+                        self.preview_protocol = None;
+                    }
+                    self.dispatched_generation = self.generation;
+                }
+            }
             Ok(raw) => {
                 let display = self.graphics.recolor(raw);
-                if !is_current_generation && !is_current_preview {
-                    // Stale render (a neighbour that scrolled past) — still encode it
-                    // off-thread so revisiting it is instant.
-                    self.queue_protocol_warm_inner(key, display.clone(), false);
-                    self.remember_cache(key, display);
-                    return;
-                }
-
-                self.preview_error = None;
-                // Stash whatever was being shown while this rendered (may be a
-                // different equation that stayed visible during the debounce window).
-                if self.preview_cache_key != key {
-                    if let Some(old_proto) = self.preview_protocol.take() {
-                        self.remember_protocol(self.preview_cache_key, old_proto);
+                if is_current {
+                    self.preview_error = None;
+                    if self.preview_protocol.is_none() {
+                        if let Some(protocol) = self.take_protocol(result.key) {
+                            self.preview_protocol = Some(protocol);
+                        } else {
+                            self.queue_current_protocol_warm(result.key, display.clone());
+                        }
                     }
-                    self.preview_cache_key = key;
+                    self.dispatched_generation = self.generation;
+                } else {
+                    self.queue_protocol_warm_inner(result.key, display.clone(), false);
                 }
-                if self.preview_protocol.is_none() {
-                    if let Some(protocol) = self.take_protocol(key) {
-                        self.preview_protocol = Some(protocol);
-                    } else {
-                        // Encode off-thread; promoted into the preview when ready.
-                        self.queue_current_protocol_warm(key, display.clone());
-                    }
-                }
-                self.dispatched_generation = self.generation;
-                self.remember_cache(key, display);
-            }
-            Err(err) => {
-                if !is_current_generation && !is_current_preview {
-                    return;
-                }
-
-                self.preview_error = Some(err);
-                if !self.preview_preserve_on_error {
-                    self.preview_protocol = None;
-                }
-                self.dispatched_generation = self.generation;
+                self.remember_cache(result.key, display);
             }
         }
     }
@@ -1033,7 +970,11 @@ impl AppState {
         };
         self.schedule_latex_inner(latex, px, immediate);
         if !in_editor {
-            self.schedule_warm_neighbors();
+            if immediate {
+                self.schedule_warm_neighbors();
+            } else {
+                self.needs_warm_submit = true;
+            }
         }
     }
 
@@ -1078,7 +1019,6 @@ impl AppState {
         if self.preview_protocol.is_some() {
             // Already displaying the right equation — nothing to do.
             self.dispatched_generation = self.generation;
-            self.render_inflight_key = None;
             return;
         }
 
@@ -1087,7 +1027,6 @@ impl AppState {
             self.preview_protocol = Some(protocol);
             self.preview_error = None;
             self.dispatched_generation = self.generation;
-            self.render_inflight_key = None;
             return;
         }
 
@@ -1102,7 +1041,6 @@ impl AppState {
             if self.queue_current_protocol_warm(new_key, display) {
                 self.preview_error = None;
                 self.dispatched_generation = self.generation;
-                self.render_inflight_key = None;
             }
             // If the encode could not be queued (e.g. no preview size yet) we fall through
             // leaving generation != dispatched_generation so the debounced full render
@@ -1118,11 +1056,15 @@ impl AppState {
             if self.queue_current_protocol_warm(new_key, display) {
                 self.preview_error = None;
                 self.dispatched_generation = self.generation;
-                self.render_inflight_key = None;
             }
             // If no preview size is known yet, set_preview_warm_size kicks the encode once
             // the pane is first drawn; until then the debounced full render is the fallback.
+            return;
         }
+
+        // Image not in any cache — submit to the render queue.
+        self.submit_to_queue(new_key, self.preview_latex.clone(), self.preview_render_px, 0);
+        self.dispatched_generation = self.generation;
     }
 
     fn schedule_warm_neighbors(&mut self) {
@@ -1130,7 +1072,6 @@ impl AppState {
             return;
         }
 
-        let mut jobs = Vec::new();
         let mut seen = HashSet::new();
         for distance in 1..=WARM_RADIUS {
             for index in [
@@ -1145,10 +1086,7 @@ impl AppState {
                 };
                 let item_px = self.effective_render_px(item.px_height);
                 let key = render_cache::key(&item.latex, item_px);
-                if !seen.insert(key)
-                    || self.warm_inflight.contains(&key)
-                    || self.warm_failed.contains(&key)
-                {
+                if !seen.insert(key) {
                     continue;
                 }
 
@@ -1166,17 +1104,9 @@ impl AppState {
                     continue;
                 }
 
-                // Not rendered yet — render it off-thread.
-                jobs.push(WarmJob {
-                    latex: item.latex.clone(),
-                    px: item_px,
-                });
-                self.warm_inflight.insert(key);
+                // Not rendered yet — submit to the render queue.
+                self.submit_to_queue(key, item.latex.clone(), item_px, distance as u8);
             }
-        }
-
-        if !jobs.is_empty() {
-            self.warm_worker.send(jobs);
         }
     }
 
@@ -2158,13 +2088,6 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     match u32::from(cell_size_px.height) {
         0 => FALLBACK_TERMINAL_CELL_PX_HEIGHT,
         height => height,
-    }
-}
-
-fn warm_result_key(result: &WarmResult) -> Option<u64> {
-    match &result.outcome {
-        WarmOutcome::Ready { latex, px, .. } => Some(render_cache::key(latex, *px)),
-        WarmOutcome::Skipped(_) => None,
     }
 }
 
