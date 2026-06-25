@@ -12,7 +12,7 @@
       { "symbol": "E", "description": "total electronic energy (eigenvalue)" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d002"],
-    "px_height": 110,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -29,7 +29,7 @@
       { "symbol": "e^2/|\\mathbf{r}_i-\\mathbf{r}_j|", "description": "electron-electron Coulomb repulsion" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d001", "00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000b022"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -63,7 +63,7 @@
       { "symbol": "E_0", "description": "ground-state energy" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d005", "00000000-0000-4000-8000-00000000d006", "00000000-0000-4000-8000-00000000d007"],
-    "px_height": 110,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -97,7 +97,7 @@
       { "symbol": "V_{ee}[n]", "description": "electron-electron interaction functional" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d004", "00000000-0000-4000-8000-00000000d005", "00000000-0000-4000-8000-00000000d007", "00000000-0000-4000-8000-00000000d020"],
-    "px_height": 100,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -116,7 +116,7 @@
       { "symbol": "\\hat{V}_{ee}", "description": "electron-electron interaction operator" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d004", "00000000-0000-4000-8000-00000000d006"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -135,7 +135,7 @@
       { "symbol": "v_{\\text{eff}}", "description": "effective single-particle potential" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d002", "00000000-0000-4000-8000-00000000d009", "00000000-0000-4000-8000-00000000d010", "00000000-0000-4000-8000-00000000d014", "00000000-0000-4000-8000-00000000d025"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -153,7 +153,7 @@
       { "symbol": "v_{xc}", "description": "exchange-correlation potential" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d008", "00000000-0000-4000-8000-00000000d011", "00000000-0000-4000-8000-00000000d013"],
-    "px_height": 110,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -198,7 +198,7 @@
       { "symbol": "E_{H}[n]", "description": "Hartree energy" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d011", "00000000-0000-4000-8000-00000000d014"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -247,7 +247,7 @@
       { "symbol": "T_s[n]", "description": "non-interacting kinetic-energy functional" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d010", "00000000-0000-4000-8000-00000000d014", "00000000-0000-4000-8000-00000000d020"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -292,7 +292,7 @@
       { "symbol": "E_{x}^{\\text{LDA}}", "description": "LDA exchange energy" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d017", "00000000-0000-4000-8000-00000000d021"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -322,7 +322,7 @@
       { "symbol": "T_{\\text{TF}}[n]", "description": "Thomas-Fermi kinetic energy" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d006", "00000000-0000-4000-8000-00000000d015"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -338,7 +338,7 @@
       { "symbol": "n", "description": "uniform electron density" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d018"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -354,7 +354,7 @@
       { "symbol": "n_{\\downarrow}", "description": "spin-down density" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d010"],
-    "px_height": 110,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -386,7 +386,7 @@
       { "symbol": "f_i", "description": "occupation of orbital i" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d016"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -402,7 +402,7 @@
       { "symbol": "\\mathbf{R}_I", "description": "position of nucleus I" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d008"],
-    "px_height": 140,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -418,7 +418,7 @@
       { "symbol": "E_{x}^{\\text{HF}}", "description": "exact (Hartree-Fock) exchange" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d019", "00000000-0000-4000-8000-00000000d017"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -450,7 +450,7 @@
       { "symbol": "E_{\\text{cut}}", "description": "plane-wave kinetic-energy cutoff" }
     ],
     "related": ["00000000-0000-4000-8000-00000000d027"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -483,7 +483,7 @@
       { "symbol": "\\operatorname{Tr}", "description": "trace over Fock space" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b003", "00000000-0000-4000-8000-00000000b014"],
-    "px_height": 100,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -498,7 +498,7 @@
       { "symbol": "\\hat{O}", "description": "observable operator" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b002"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -514,7 +514,7 @@
       { "symbol": "\\nu_n", "description": "bosonic Matsubara frequency" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b005", "00000000-0000-4000-8000-00000000b006"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -578,7 +578,7 @@
       { "symbol": "\\Sigma", "description": "self-energy" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000b027"],
-    "px_height": 100,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -593,7 +593,7 @@
       { "symbol": "A(\\mathbf{k}, \\omega)", "description": "single-particle spectral function" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b001", "00000000-0000-4000-8000-00000000b010", "00000000-0000-4000-8000-00000000b011"],
-    "px_height": 140,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -609,7 +609,7 @@
       { "symbol": "A", "description": "spectral function" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b009", "00000000-0000-4000-8000-00000000b011"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -624,7 +624,7 @@
       { "symbol": "i0^{+}", "description": "positive infinitesimal imaginary shift" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b009", "00000000-0000-4000-8000-00000000b010"],
-    "px_height": 110,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -656,7 +656,7 @@
       { "symbol": "V(\\tau)", "description": "interaction term" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b014"],
-    "px_height": 140,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -674,7 +674,7 @@
       { "symbol": "\\langle\\cdots\\rangle_0", "description": "average in the non-interacting ensemble" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b002", "00000000-0000-4000-8000-00000000b013", "00000000-0000-4000-8000-00000000b015", "00000000-0000-4000-8000-00000000b016"],
-    "px_height": 150,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -705,7 +705,7 @@
       { "symbol": "D_\\nu", "description": "value of connected diagram ν" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b014", "00000000-0000-4000-8000-00000000b017"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -770,7 +770,7 @@
       { "symbol": "P(\\nu)", "description": "stationary probability of configuration ν" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b019"],
-    "px_height": 100,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -853,7 +853,7 @@
       { "symbol": "W", "description": "screened Coulomb interaction" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b024", "00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000d013"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -886,7 +886,7 @@
       { "symbol": "\\Phi[G]", "description": "Luttinger-Ward (Baym-Kadanoff) functional" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b007", "00000000-0000-4000-8000-00000000b008"],
-    "px_height": 120,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },
@@ -904,7 +904,7 @@
       { "symbol": "\\Gamma_{\\text{irr}}", "description": "irreducible vertex (BSE kernel)" }
     ],
     "related": ["00000000-0000-4000-8000-00000000b024"],
-    "px_height": 110,
+    "px_height": 130,
     "created_at": "2026-06-24T12:00:00Z",
     "updated_at": "2026-06-24T12:00:00Z"
   },

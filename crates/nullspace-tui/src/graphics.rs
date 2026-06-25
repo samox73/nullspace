@@ -7,7 +7,13 @@ use ratatui_image::{
 pub struct Graphics {
     picker: Picker,
     pub graphics_ok: bool,
+    pub cell_size_px: TerminalCellSize,
     palette: Option<TerminalPalette>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalCellSize {
+    pub height: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -21,10 +27,14 @@ impl Graphics {
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
         let graphics_ok =
             picker.protocol_type() != ProtocolType::Halfblocks || terminal_graphics_detected();
+        let font_size = picker.font_size();
         let palette = query_terminal_palette();
         Self {
             picker,
             graphics_ok,
+            cell_size_px: TerminalCellSize {
+                height: font_size.height,
+            },
             palette,
         }
     }

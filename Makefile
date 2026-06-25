@@ -6,6 +6,9 @@ DEMO_DATA := demo/solid-state-physics.json
 all:
 	cargo run -p nullspace-tui
 
+clear-db:
+	rm -f ~/.local/share/nullspace/nullspace.sqlite3
+
 export:
 	cargo run -p nullspace-tui -- --export equations.json
 

@@ -12,7 +12,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::action::Action;
-use crate::graphics::Graphics;
+use crate::graphics::{Graphics, TerminalCellSize};
 use crate::protocol_warm_worker::{
     ProtocolWarmJob, ProtocolWarmOutcome, ProtocolWarmResult, ProtocolWarmWorker,
 };
@@ -33,8 +33,9 @@ const RENDER_RESULTS_PER_TICK: usize = 2;
 const RESULT_TICK_BUDGET: Duration = Duration::from_millis(4);
 const MIN_RENDER_PX: u32 = 16;
 const MAX_RENDER_PX: u32 = 512;
-const APPROX_TERMINAL_CELL_PX_HEIGHT: u32 = 20;
-const PREVIEW_RENDER_EDGE_GUARD_PX: u32 = 2;
+const FALLBACK_TERMINAL_CELL_PX_HEIGHT: u32 = 26;
+const PREVIEW_RENDER_EDGE_GUARD_PX: u32 = 0;
+const DEFAULT_EQUATION_ROWS: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -175,6 +176,7 @@ pub struct AppState {
     pub layout: LayoutOrientation,
     pub should_quit: bool,
     pub graphics_ok: bool,
+    pub cell_size_px: TerminalCellSize,
     pub status: String,
     pub selected: Option<Equation>,
     pub editor: Option<EditorState>,
@@ -223,8 +225,10 @@ pub enum CacheStatus {
 impl AppState {
     pub fn open(path: &Path, graphics: Graphics) -> anyhow::Result<Self> {
         let mut store = Store::open(path)?;
+        let cell_size_px = graphics.cell_size_px;
+        let default_equation_px = default_equation_px(cell_size_px);
         if store.list()?.is_empty() {
-            seed(&mut store)?;
+            seed(&mut store, default_equation_px)?;
         }
         let graphics_ok = graphics.graphics_ok;
         let mut app = Self {
@@ -239,17 +243,18 @@ impl AppState {
             list_scroll_offset: 0,
             list_visible_height: 0,
             focus: Pane::List,
-            layout: LayoutOrientation::Horizontal,
+            layout: LayoutOrientation::Vertical,
             should_quit: false,
             graphics_ok,
+            cell_size_px,
             status: "Ready".to_string(),
             selected: None,
             editor: None,
             preview_protocol: None,
             preview_error: None,
             preview_latex: String::new(),
-            preview_px: 160,
-            preview_render_px: 160,
+            preview_px: default_equation_px,
+            preview_render_px: default_equation_px,
             preview_preserve_on_error: false,
             notification: None,
             editor_history: Vec::new(),
@@ -312,8 +317,7 @@ impl AppState {
         }
         self.preview_warm_size = Some(size);
         if !self.preview_latex.is_empty()
-            && effective_render_px(self.preview_px, self.preview_warm_size)
-                != self.preview_render_px
+            && self.effective_render_px(self.preview_px) != self.preview_render_px
         {
             self.schedule_latex_inner(self.preview_latex.clone(), self.preview_px, true);
             return;
@@ -1014,7 +1018,11 @@ impl AppState {
     }
 
     fn effective_render_px(&self, preferred_px: u32) -> u32 {
-        effective_render_px(preferred_px, self.preview_warm_size)
+        effective_render_px(preferred_px, self.preview_warm_size, self.cell_size_px)
+    }
+
+    fn default_equation_px(&self) -> u32 {
+        default_equation_px(self.cell_size_px)
     }
 
     fn schedule_latex_inner(&mut self, latex: String, px: u32, immediate: bool) {
@@ -1823,7 +1831,10 @@ impl AppState {
         let mut equation = if let Some(id) = editing {
             self.store.get(id)?
         } else {
-            Equation::new(fields[0].trim().to_string(), fields[2].trim().to_string())
+            let mut equation =
+                Equation::new(fields[0].trim().to_string(), fields[2].trim().to_string());
+            equation.px_height = self.default_equation_px();
+            equation
         };
         equation.name = fields[0].trim().to_string();
         equation.description = fields[1].trim().to_string();
@@ -1947,7 +1958,7 @@ impl AppState {
     }
 }
 
-fn seed(store: &mut Store) -> anyhow::Result<()> {
+fn seed(store: &mut Store, default_equation_px: u32) -> anyhow::Result<()> {
     let demos = [
         ("Mass energy equivalence", "E = mc^2"),
         (
@@ -1959,6 +1970,7 @@ fn seed(store: &mut Store) -> anyhow::Result<()> {
     for (name, latex) in demos {
         let mut eq = Equation::new(name.to_string(), latex.to_string());
         eq.description = "Seed equation".to_string();
+        eq.px_height = default_equation_px;
         store.insert(&eq)?;
     }
     Ok(())
@@ -2086,16 +2098,34 @@ fn fuzzy_matches_item(query: &str, item: &EquationSummary) -> bool {
     item.name.to_lowercase().contains(&needle) || item.latex.to_lowercase().contains(&needle)
 }
 
-fn effective_render_px(preferred_px: u32, preview_size: Option<Size>) -> u32 {
+fn effective_render_px(
+    preferred_px: u32,
+    preview_size: Option<Size>,
+    cell_size_px: TerminalCellSize,
+) -> u32 {
     let preferred_px = preferred_px.clamp(MIN_RENDER_PX, MAX_RENDER_PX);
     let Some(size) = preview_size else {
         return preferred_px;
     };
+    let cell_height = terminal_cell_height_px(cell_size_px);
     let pane_px = u32::from(size.height)
-        .saturating_mul(APPROX_TERMINAL_CELL_PX_HEIGHT)
+        .saturating_mul(cell_height)
         .saturating_sub(PREVIEW_RENDER_EDGE_GUARD_PX)
         .clamp(MIN_RENDER_PX, MAX_RENDER_PX);
     preferred_px.min(pane_px)
+}
+
+fn default_equation_px(cell_size_px: TerminalCellSize) -> u32 {
+    terminal_cell_height_px(cell_size_px)
+        .saturating_mul(DEFAULT_EQUATION_ROWS)
+        .clamp(MIN_RENDER_PX, MAX_RENDER_PX)
+}
+
+fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
+    match u32::from(cell_size_px.height) {
+        0 => FALLBACK_TERMINAL_CELL_PX_HEIGHT,
+        height => height,
+    }
 }
 
 fn warm_result_key(result: &WarmResult) -> Option<u64> {
@@ -2141,8 +2171,10 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_render_px, fuzzy_matches_item, textarea_from_text, textarea_lines, textarea_text,
+        default_equation_px, effective_render_px, fuzzy_matches_item, textarea_from_text,
+        textarea_lines, textarea_text,
     };
+    use crate::graphics::TerminalCellSize;
     use nullspace_core::{EquationId, EquationSummary};
     use ratatui::layout::Size;
 
@@ -2187,8 +2219,9 @@ mod tests {
             width: 80,
             height: 5,
         });
+        let cell_size = TerminalCellSize { height: 20 };
 
-        assert_eq!(effective_render_px(512, size), 98);
+        assert_eq!(effective_render_px(512, size, cell_size), 96);
     }
 
     #[test]
@@ -2197,7 +2230,37 @@ mod tests {
             width: 80,
             height: 20,
         });
+        let cell_size = TerminalCellSize { height: 20 };
 
-        assert_eq!(effective_render_px(48, size), 48);
+        assert_eq!(effective_render_px(48, size, cell_size), 48);
+    }
+
+    #[test]
+    fn effective_render_px_uses_detected_cell_height() {
+        let size = Some(Size {
+            width: 80,
+            height: 5,
+        });
+        let cell_size = TerminalCellSize { height: 18 };
+
+        assert_eq!(effective_render_px(512, size, cell_size), 86);
+    }
+
+    #[test]
+    fn effective_render_px_leaves_margin_inside_detected_cell_box() {
+        let size = Some(Size {
+            width: 80,
+            height: 5,
+        });
+        let cell_size = TerminalCellSize { height: 26 };
+
+        assert_eq!(effective_render_px(512, size, cell_size), 126);
+    }
+
+    #[test]
+    fn default_equation_px_is_five_cell_heights() {
+        let cell_size = TerminalCellSize { height: 20 };
+
+        assert_eq!(default_equation_px(cell_size), 100);
     }
 }

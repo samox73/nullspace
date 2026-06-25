@@ -1,7 +1,7 @@
 use image::RgbaImage;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const RENDER_CACHE_VERSION: u32 = 1;
+const RENDER_CACHE_VERSION: u32 = 2;
 static TEMP_FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn key(latex: &str, px: u32) -> u64 {
