@@ -60,6 +60,65 @@ fn rasterize_svg(svg: &str, target_height: u32) -> Result<RgbaImage, String> {
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap_mut,
     );
-    RgbaImage::from_raw(width, height, pixmap.data().to_vec())
-        .ok_or_else(|| "invalid raster buffer".to_string())
+    let image = RgbaImage::from_raw(width, height, pixmap.data().to_vec())
+        .ok_or_else(|| "invalid raster buffer".to_string())?;
+    Ok(center_visible_content_vertically(image))
+}
+
+fn center_visible_content_vertically(image: RgbaImage) -> RgbaImage {
+    let Some((top, bottom)) = visible_vertical_bounds(&image) else {
+        return image;
+    };
+    let content_height = bottom - top + 1;
+    let centered_top = image.height().saturating_sub(content_height) / 2;
+    if top == centered_top {
+        return image;
+    }
+
+    let mut centered = RgbaImage::from_pixel(
+        image.width(),
+        image.height(),
+        image::Rgba([255, 255, 255, 255]),
+    );
+    for y in top..=bottom {
+        let target_y = centered_top + (y - top);
+        for x in 0..image.width() {
+            centered.put_pixel(x, target_y, *image.get_pixel(x, y));
+        }
+    }
+    centered
+}
+
+fn visible_vertical_bounds(image: &RgbaImage) -> Option<(u32, u32)> {
+    let mut top = None;
+    let mut bottom = None;
+    for (_, y, pixel) in image.enumerate_pixels() {
+        if !is_background_pixel(pixel) {
+            top = Some(top.map_or(y, |current: u32| current.min(y)));
+            bottom = Some(bottom.map_or(y, |current: u32| current.max(y)));
+        }
+    }
+    top.zip(bottom)
+}
+
+fn is_background_pixel(pixel: &image::Rgba<u8>) -> bool {
+    let [red, green, blue, alpha] = pixel.0;
+    alpha == 255 && red > 250 && green > 250 && blue > 250
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{center_visible_content_vertically, visible_vertical_bounds};
+    use image::{Rgba, RgbaImage};
+
+    #[test]
+    fn center_visible_content_vertically_balances_blank_rows() {
+        let mut image = RgbaImage::from_pixel(3, 9, Rgba([255, 255, 255, 255]));
+        image.put_pixel(1, 1, Rgba([0, 0, 0, 255]));
+        image.put_pixel(1, 2, Rgba([0, 0, 0, 255]));
+
+        let centered = center_visible_content_vertically(image);
+
+        assert_eq!(visible_vertical_bounds(&centered), Some((3, 4)));
+    }
 }

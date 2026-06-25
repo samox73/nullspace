@@ -1,26 +1,40 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
+use image::RgbaImage;
 use ratatui::layout::Size;
 use ratatui_image::{protocol::StatefulProtocol, Resize, ResizeEncodeRender};
 use rayon::prelude::*;
 
+use crate::graphics::Graphics;
+
 pub struct ProtocolWarmJob {
     pub key: u64,
-    pub protocol: StatefulProtocol,
+    pub source: ProtocolWarmSource,
     pub size: Size,
     pub priority: bool,
+}
+
+pub enum ProtocolWarmSource {
+    Image {
+        display: RgbaImage,
+        graphics: Graphics,
+    },
+    Protocol(StatefulProtocol),
 }
 
 pub enum ProtocolWarmOutcome {
     Ready {
         key: u64,
+        size: Size,
         protocol: Box<StatefulProtocol>,
     },
     Failed {
         key: u64,
+        size: Size,
     },
-    Skipped(Vec<u64>),
+    Skipped(Vec<(u64, Size)>),
 }
 
 pub struct ProtocolWarmResult {
@@ -92,23 +106,55 @@ fn warm_protocols(jobs: Vec<ProtocolWarmJob>, result_tx: &Sender<ProtocolWarmRes
         .for_each(|job| warm_protocol(job, result_tx));
 }
 
-fn warm_protocol(mut job: ProtocolWarmJob, result_tx: &Sender<ProtocolWarmResult>) {
-    job.protocol.resize_encode(&Resize::Fit(None), job.size);
-    let outcome = match job.protocol.last_encoding_result() {
-        Some(Ok(())) => ProtocolWarmOutcome::Ready {
-            key: job.key,
-            protocol: Box::new(job.protocol),
-        },
-        Some(Err(_)) | None => ProtocolWarmOutcome::Failed { key: job.key },
-    };
+fn warm_protocol(job: ProtocolWarmJob, result_tx: &Sender<ProtocolWarmResult>) {
+    let key = job.key;
+    let size = job.size;
+    let outcome = catch_unwind(AssertUnwindSafe(|| encode_protocol(job)))
+        .unwrap_or(ProtocolWarmOutcome::Failed { key, size });
     let _ = result_tx.send(ProtocolWarmResult { outcome });
 }
 
+fn encode_protocol(job: ProtocolWarmJob) -> ProtocolWarmOutcome {
+    let mut protocol = match job.source {
+        ProtocolWarmSource::Image { display, graphics } => {
+            graphics.protocol_from(display, job.size)
+        }
+        ProtocolWarmSource::Protocol(protocol) => protocol,
+    };
+    // Fit the image into the available area, then encode at that fitted size. The encoded
+    // area is what `StatefulProtocol::needs_resize` compares against on the draw thread, so
+    // it must equal `size_for(Fit, available)` — encoding at the full `job.size` instead
+    // leaves the protocol perpetually "needing resize" whenever the equation doesn't fill
+    // the pane, which shows an endless spinner.
+    let fit_size = protocol.size_for(Resize::Fit(None), job.size);
+    if fit_size.width == 0 || fit_size.height == 0 {
+        return ProtocolWarmOutcome::Failed {
+            key: job.key,
+            size: job.size,
+        };
+    }
+    protocol.resize_encode(&Resize::Fit(None), fit_size);
+    match protocol.last_encoding_result() {
+        Some(Ok(())) => ProtocolWarmOutcome::Ready {
+            key: job.key,
+            size: job.size,
+            protocol: Box::new(protocol),
+        },
+        Some(Err(_)) | None => ProtocolWarmOutcome::Failed {
+            key: job.key,
+            size: job.size,
+        },
+    }
+}
+
 fn send_skipped(jobs: Vec<ProtocolWarmJob>, result_tx: &Sender<ProtocolWarmResult>) {
-    let keys = jobs.into_iter().map(|job| job.key).collect::<Vec<_>>();
-    if !keys.is_empty() {
+    let skipped = jobs
+        .into_iter()
+        .map(|job| (job.key, job.size))
+        .collect::<Vec<_>>();
+    if !skipped.is_empty() {
         let _ = result_tx.send(ProtocolWarmResult {
-            outcome: ProtocolWarmOutcome::Skipped(keys),
+            outcome: ProtocolWarmOutcome::Skipped(skipped),
         });
     }
 }

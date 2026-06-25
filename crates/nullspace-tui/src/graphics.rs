@@ -1,9 +1,11 @@
 use image::{DynamicImage, Rgba, RgbaImage};
+use ratatui::layout::Size;
 use ratatui_image::{
     picker::{Picker, ProtocolType},
     protocol::StatefulProtocol,
 };
 
+#[derive(Clone)]
 pub struct Graphics {
     picker: Picker,
     pub graphics_ok: bool,
@@ -47,11 +49,81 @@ impl Graphics {
         }
     }
 
-    pub fn protocol_from(&self, image: RgbaImage) -> StatefulProtocol {
+    pub fn protocol_from(&self, image: RgbaImage, available: Size) -> StatefulProtocol {
+        let image = center_visible_content_in_cell_rows(image, self.cell_size_px, available.height);
         self.picker
             .new_resize_protocol(DynamicImage::ImageRgba8(image))
     }
 }
+
+fn center_visible_content_in_cell_rows(
+    image: RgbaImage,
+    cell_size_px: TerminalCellSize,
+    available_rows: u16,
+) -> RgbaImage {
+    let Some((top, bottom)) = visible_vertical_bounds(&image) else {
+        return image;
+    };
+    let content_height = bottom - top + 1;
+    let target_height = centered_cell_row_height_px(content_height, cell_size_px, available_rows);
+
+    let background = image
+        .get_pixel_checked(0, 0)
+        .copied()
+        .unwrap_or(Rgba([255, 255, 255, 255]));
+    let top_padding = target_height.saturating_sub(content_height) / 2;
+    let mut padded = RgbaImage::from_pixel(image.width(), target_height, background);
+    for y in top..=bottom {
+        let target_y = top_padding + (y - top);
+        for x in 0..image.width() {
+            padded.put_pixel(x, target_y, *image.get_pixel(x, y));
+        }
+    }
+    padded
+}
+
+fn centered_cell_row_height_px(
+    image_height: u32,
+    cell_size_px: TerminalCellSize,
+    available_rows: u16,
+) -> u32 {
+    let cell_height = u32::from(cell_size_px.height);
+    if image_height == 0 || cell_height == 0 {
+        return image_height;
+    }
+
+    let mut rows = image_height.div_ceil(cell_height);
+    let available_rows = u32::from(available_rows);
+    if available_rows >= rows {
+        rows = available_rows;
+    } else if image_height % cell_height == 0 && rows % 2 == 0 {
+        rows += 1;
+    }
+    rows.saturating_mul(cell_height)
+}
+
+fn visible_vertical_bounds(image: &RgbaImage) -> Option<(u32, u32)> {
+    let background = image.get_pixel_checked(0, 0)?;
+    let mut top = None;
+    let mut bottom = None;
+    for (_, y, pixel) in image.enumerate_pixels() {
+        if !matches_background(pixel, background) {
+            top = Some(top.map_or(y, |current: u32| current.min(y)));
+            bottom = Some(bottom.map_or(y, |current: u32| current.max(y)));
+        }
+    }
+    top.zip(bottom)
+}
+
+fn matches_background(pixel: &Rgba<u8>, background: &Rgba<u8>) -> bool {
+    pixel
+        .0
+        .iter()
+        .zip(background.0)
+        .all(|(pixel, background)| pixel.abs_diff(background) <= BACKGROUND_MATCH_TOLERANCE)
+}
+
+const BACKGROUND_MATCH_TOLERANCE: u8 = 4;
 
 fn recolor_image(mut image: RgbaImage, palette: TerminalPalette) -> RgbaImage {
     for pixel in image.pixels_mut() {
@@ -239,5 +311,71 @@ mod tests {
 
         assert_eq!(recolored.get_pixel(0, 0).0, [10, 11, 12, 255]);
         assert_eq!(recolored.get_pixel(1, 0).0, [230, 231, 232, 255]);
+    }
+
+    #[test]
+    fn fractional_cell_height_gets_balanced_padding() {
+        let mut image = RgbaImage::from_pixel(3, 100, Rgba([255, 255, 255, 255]));
+        for y in 40..74 {
+            image.put_pixel(1, y, Rgba([0, 0, 0, 255]));
+        }
+
+        let padded = center_visible_content_in_cell_rows(image, TerminalCellSize { height: 20 }, 0);
+
+        assert_eq!(padded.height(), 40);
+        assert_eq!(padded.get_pixel(1, 3).0, [0, 0, 0, 255]);
+        assert_eq!(padded.get_pixel(1, 36).0, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn exact_even_cell_height_promotes_to_odd_cell_count() {
+        assert_eq!(
+            centered_cell_row_height_px(40, TerminalCellSize { height: 20 }, 0),
+            60
+        );
+        assert_eq!(
+            centered_cell_row_height_px(80, TerminalCellSize { height: 20 }, 0),
+            100
+        );
+    }
+
+    #[test]
+    fn exact_even_cell_content_is_centered_in_promoted_cell_count() {
+        let mut image = RgbaImage::from_pixel(3, 100, Rgba([255, 255, 255, 255]));
+        for y in 0..80 {
+            image.put_pixel(1, y, Rgba([0, 0, 0, 255]));
+        }
+
+        let padded = center_visible_content_in_cell_rows(image, TerminalCellSize { height: 20 }, 0);
+
+        assert_eq!(padded.height(), 100);
+        assert_eq!(padded.get_pixel(1, 9).0, [255, 255, 255, 255]);
+        assert_eq!(padded.get_pixel(1, 10).0, [0, 0, 0, 255]);
+        assert_eq!(padded.get_pixel(1, 89).0, [0, 0, 0, 255]);
+        assert_eq!(padded.get_pixel(1, 90).0, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn exact_odd_cell_height_stays_on_its_middle_row() {
+        assert_eq!(
+            centered_cell_row_height_px(60, TerminalCellSize { height: 20 }, 0),
+            60
+        );
+    }
+
+    #[test]
+    fn content_is_centered_in_available_rows() {
+        let mut image = RgbaImage::from_pixel(3, 100, Rgba([255, 255, 255, 255]));
+        for y in 0..73 {
+            image.put_pixel(1, y, Rgba([0, 0, 0, 255]));
+        }
+
+        let padded = center_visible_content_in_cell_rows(image, TerminalCellSize { height: 20 }, 5);
+
+        assert_eq!(padded.height(), 100);
+        assert_eq!(padded.get_pixel(1, 12).0, [255, 255, 255, 255]);
+        assert_eq!(padded.get_pixel(1, 13).0, [0, 0, 0, 255]);
+        assert_eq!(padded.get_pixel(1, 85).0, [0, 0, 0, 255]);
+        assert_eq!(padded.get_pixel(1, 86).0, [255, 255, 255, 255]);
     }
 }

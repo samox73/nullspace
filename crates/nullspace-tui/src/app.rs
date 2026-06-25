@@ -14,7 +14,8 @@ use tui_textarea::{CursorMove, TextArea, WrapMode};
 use crate::action::Action;
 use crate::graphics::{Graphics, TerminalCellSize};
 use crate::protocol_warm_worker::{
-    ProtocolWarmJob, ProtocolWarmOutcome, ProtocolWarmResult, ProtocolWarmWorker,
+    ProtocolWarmJob, ProtocolWarmOutcome, ProtocolWarmResult, ProtocolWarmSource,
+    ProtocolWarmWorker,
 };
 use crate::render_cache;
 use crate::render_worker::{RenderJob, RenderResult, RenderWorker};
@@ -201,7 +202,7 @@ pub struct AppState {
     cache_order: VecDeque<u64>,
     warm_inflight: HashSet<u64>,
     warm_failed: HashSet<u64>,
-    protocol_warm_inflight: HashSet<u64>,
+    protocol_warm_inflight: HashMap<u64, Size>,
     protocol_cache: HashMap<u64, StatefulProtocol>,
     protocol_cache_order: VecDeque<u64>,
     preview_cache_key: u64,
@@ -271,7 +272,7 @@ impl AppState {
             cache_order: VecDeque::new(),
             warm_inflight: HashSet::new(),
             warm_failed: HashSet::new(),
-            protocol_warm_inflight: HashSet::new(),
+            protocol_warm_inflight: HashMap::new(),
             protocol_cache: HashMap::new(),
             protocol_cache_order: VecDeque::new(),
             preview_cache_key: 0,
@@ -338,7 +339,7 @@ impl AppState {
     pub fn cache_status_for(&self, latex: &str, px: u32) -> CacheStatus {
         let key = render_cache::key(latex, self.effective_render_px(px));
         if self.warm_inflight.contains(&key)
-            || self.protocol_warm_inflight.contains(&key)
+            || self.protocol_warm_inflight.contains_key(&key)
             || self.render_inflight_key == Some(key)
             || (key == self.preview_cache_key && self.generation != self.dispatched_generation)
         {
@@ -863,24 +864,44 @@ impl AppState {
 
     fn handle_protocol_result(&mut self, result: ProtocolWarmResult) {
         match result.outcome {
-            ProtocolWarmOutcome::Ready { key, protocol } => {
-                self.protocol_warm_inflight.remove(&key);
-                if key == self.preview_cache_key && self.preview_protocol.is_none() {
+            ProtocolWarmOutcome::Ready {
+                key,
+                size,
+                protocol,
+            } => {
+                self.remove_protocol_inflight(key, size);
+                let is_current_size = self.preview_warm_size == Some(size);
+                if key == self.preview_cache_key
+                    && is_current_size
+                    && self.preview_protocol.is_none()
+                {
                     // The deferred (scroll) path is waiting on this encode — promote it
                     // to the live preview now that it's ready, without blocking the UI.
                     self.preview_protocol = Some(*protocol);
                     self.preview_error = None;
                     self.dispatched_generation = self.generation;
-                } else {
+                } else if key != self.preview_cache_key || is_current_size {
                     self.remember_protocol(key, *protocol);
                 }
             }
-            ProtocolWarmOutcome::Failed { key } => {
-                self.protocol_warm_inflight.remove(&key);
+            ProtocolWarmOutcome::Failed { key, size } => {
+                self.remove_protocol_inflight(key, size);
+                if key == self.preview_cache_key
+                    && self.preview_warm_size == Some(size)
+                    && self.preview_protocol.is_none()
+                {
+                    self.dispatched_generation = self.generation.saturating_sub(1);
+                }
             }
-            ProtocolWarmOutcome::Skipped(keys) => {
-                for key in keys {
-                    self.protocol_warm_inflight.remove(&key);
+            ProtocolWarmOutcome::Skipped(jobs) => {
+                for (key, size) in jobs {
+                    self.remove_protocol_inflight(key, size);
+                    if key == self.preview_cache_key
+                        && self.preview_warm_size == Some(size)
+                        && self.preview_protocol.is_none()
+                    {
+                        self.dispatched_generation = self.generation.saturating_sub(1);
+                    }
                 }
             }
         }
@@ -894,9 +915,10 @@ impl AppState {
                 match image {
                     Ok(raw) => {
                         let display = self.graphics.recolor(raw);
-                        // Always encode off-thread — never on the UI thread. If this is the
-                        // equation currently on screen (showing a spinner), the encoded
-                        // protocol is promoted into the preview when it lands.
+                        // Encode off-thread — the active preview at priority, neighbours as
+                        // background work — so landing on a neighbour finds its protocol
+                        // already cached instead of re-rendering. The pixel scan for vertical
+                        // centering runs in the worker, never on the UI thread.
                         let priority =
                             key == self.preview_cache_key && self.preview_protocol.is_none();
                         self.queue_protocol_warm_inner(key, display.clone(), priority);
@@ -927,7 +949,9 @@ impl AppState {
             Ok(raw) => {
                 let display = self.graphics.recolor(raw);
                 if !is_current_generation && !is_current_preview {
-                    self.queue_protocol_warm(key, display.clone());
+                    // Stale render (a neighbour that scrolled past) — still encode it
+                    // off-thread so revisiting it is instant.
+                    self.queue_protocol_warm_inner(key, display.clone(), false);
                     self.remember_cache(key, display);
                     return;
                 }
@@ -1067,9 +1091,13 @@ impl AppState {
             return;
         }
 
+        if !immediate {
+            return;
+        }
+
         // The decoded image may be cached even when no encoded protocol exists yet.
-        // Encode it off-thread and show the spinner until tick_render promotes the
-        // result — the UI thread never encodes.
+        // Encode it off-thread for deliberate selections; the rapid-scroll path leaves
+        // this for the debounce render so navigation never synchronously scans pixels.
         if let Some(display) = self.cache.get(&new_key).cloned() {
             if self.queue_current_protocol_warm(new_key, display) {
                 self.preview_error = None;
@@ -1079,10 +1107,6 @@ impl AppState {
             // If the encode could not be queued (e.g. no preview size yet) we fall through
             // leaving generation != dispatched_generation so the debounced full render
             // picks it up once scrolling settles.
-            return;
-        }
-
-        if !immediate {
             return;
         }
 
@@ -1134,9 +1158,11 @@ impl AppState {
                     continue;
                 }
 
-                // Decoded image cached but not yet encoded — encode it off-thread.
+                // Decoded image cached but not yet encoded — encode it off-thread so the
+                // protocol is ready the moment the cursor lands on this neighbour. The
+                // pixel scan for vertical centering happens in the worker, not here.
                 if let Some(display) = self.cache.get(&key).cloned() {
-                    self.queue_protocol_warm(key, display);
+                    self.queue_protocol_warm_inner(key, display, false);
                     continue;
                 }
 
@@ -1157,10 +1183,6 @@ impl AppState {
     /// Ensure an encoded protocol for `key` is, or will become, available. Returns
     /// `true` when the protocol is already cached/in-flight or a new encode was queued,
     /// and `false` when no encode could be arranged (no known preview size yet).
-    fn queue_protocol_warm(&mut self, key: u64, display: RgbaImage) -> bool {
-        self.queue_protocol_warm_inner(key, display, false)
-    }
-
     fn queue_current_protocol_warm(&mut self, key: u64, display: RgbaImage) -> bool {
         self.queue_protocol_warm_inner(key, display, true)
     }
@@ -1173,17 +1195,14 @@ impl AppState {
             return false;
         };
 
-        let protocol = self.graphics.protocol_from(display);
-        let size = protocol.size_for(ratatui_image::Resize::Fit(None), available);
-        if size.width == 0 || size.height == 0 {
-            return false;
-        }
-
-        self.protocol_warm_inflight.insert(key);
+        self.protocol_warm_inflight.insert(key, available);
         self.protocol_warm_worker.send(vec![ProtocolWarmJob {
             key,
-            protocol,
-            size,
+            source: ProtocolWarmSource::Image {
+                display,
+                graphics: self.graphics.clone(),
+            },
+            size: available,
             priority,
         }]);
         true
@@ -1193,7 +1212,10 @@ impl AppState {
     /// currently on screen — i.e. nothing needs to be (re-)queued for it.
     fn is_protocol_warm(&self, key: u64) -> bool {
         self.protocol_cache.contains_key(&key)
-            || self.protocol_warm_inflight.contains(&key)
+            || self
+                .protocol_warm_inflight
+                .get(&key)
+                .is_some_and(|size| Some(*size) == self.preview_warm_size)
             || (key == self.preview_cache_key && self.preview_protocol.is_some())
     }
 
@@ -1202,26 +1224,31 @@ impl AppState {
     /// thread (which blocks scrolling), we move the protocol to the background encoder and
     /// show a spinner; `tick_render` promotes the result back into the preview when ready.
     pub fn request_preview_encode(&mut self, available: Size) {
+        if available.width == 0 || available.height == 0 {
+            return;
+        }
         let key = self.preview_cache_key;
+        if self.protocol_warm_inflight.get(&key) == Some(&available) {
+            // Another encode for this equation is already in flight; keep the stale protocol
+            // visible until that result is promoted.
+            return;
+        }
         let Some(protocol) = self.preview_protocol.take() else {
             return;
         };
-        if self.protocol_warm_inflight.contains(&key) {
-            // Another encode for this equation is already in flight; drop this duplicate
-            // and wait for that result to be promoted.
-            return;
-        }
-        let size = protocol.size_for(ratatui_image::Resize::Fit(None), available);
-        if size.width == 0 || size.height == 0 {
-            // Degenerate area — keep the protocol and try again on the next frame.
-            self.preview_protocol = Some(protocol);
-            return;
-        }
-        self.protocol_warm_inflight.insert(key);
+        let source = if let Some(display) = self.cache.get(&key).cloned() {
+            ProtocolWarmSource::Image {
+                display,
+                graphics: self.graphics.clone(),
+            }
+        } else {
+            ProtocolWarmSource::Protocol(protocol)
+        };
+        self.protocol_warm_inflight.insert(key, available);
         self.protocol_warm_worker.send(vec![ProtocolWarmJob {
             key,
-            protocol,
-            size,
+            source,
+            size: available,
             priority: true,
         }]);
     }
@@ -1925,6 +1952,12 @@ impl AppState {
         self.protocol_cache.remove(&key)
     }
 
+    fn remove_protocol_inflight(&mut self, key: u64, size: Size) {
+        if self.protocol_warm_inflight.get(&key) == Some(&size) {
+            self.protocol_warm_inflight.remove(&key);
+        }
+    }
+
     fn adjust_zoom(&mut self, increase: bool) -> anyhow::Result<()> {
         let Some((id, current_px)) = self
             .items
@@ -2137,7 +2170,9 @@ fn warm_result_key(result: &WarmResult) -> Option<u64> {
 
 fn protocol_result_key(result: &ProtocolWarmResult) -> Option<u64> {
     match &result.outcome {
-        ProtocolWarmOutcome::Ready { key, .. } | ProtocolWarmOutcome::Failed { key } => Some(*key),
+        ProtocolWarmOutcome::Ready { key, .. } | ProtocolWarmOutcome::Failed { key, .. } => {
+            Some(*key)
+        }
         ProtocolWarmOutcome::Skipped(_) => None,
     }
 }
@@ -2221,7 +2256,7 @@ mod tests {
         });
         let cell_size = TerminalCellSize { height: 20 };
 
-        assert_eq!(effective_render_px(512, size, cell_size), 96);
+        assert_eq!(effective_render_px(512, size, cell_size), 100);
     }
 
     #[test]
@@ -2243,18 +2278,18 @@ mod tests {
         });
         let cell_size = TerminalCellSize { height: 18 };
 
-        assert_eq!(effective_render_px(512, size, cell_size), 86);
+        assert_eq!(effective_render_px(512, size, cell_size), 90);
     }
 
     #[test]
-    fn effective_render_px_leaves_margin_inside_detected_cell_box() {
+    fn effective_render_px_uses_full_detected_cell_box() {
         let size = Some(Size {
             width: 80,
             height: 5,
         });
         let cell_size = TerminalCellSize { height: 26 };
 
-        assert_eq!(effective_render_px(512, size, cell_size), 126);
+        assert_eq!(effective_render_px(512, size, cell_size), 130);
     }
 
     #[test]
