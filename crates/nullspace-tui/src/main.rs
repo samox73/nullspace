@@ -144,14 +144,23 @@ fn run(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     app: &mut AppState,
 ) -> anyhow::Result<()> {
+    let frame_duration = Duration::from_millis(16); // ~60fps
     while !app.should_quit {
-        app.tick_render();
-        terminal.draw(|frame| ui::draw(frame, app))?;
-        if ct_event::poll(Duration::from_millis(50))? {
+        let frame_start = std::time::Instant::now();
+
+        while ct_event::poll(Duration::ZERO)? {
             if let ct_event::Event::Key(key) = ct_event::read()? {
                 let action = event::map_key(key, app);
                 app.apply(action);
             }
+        }
+
+        app.tick_render();
+        terminal.draw(|frame| ui::draw(frame, app))?;
+
+        let elapsed = frame_start.elapsed();
+        if elapsed < frame_duration {
+            std::thread::sleep(frame_duration - elapsed);
         }
     }
     Ok(())
