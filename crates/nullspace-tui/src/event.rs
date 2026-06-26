@@ -6,6 +6,15 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Action::Quit;
     }
+    if app.help_open {
+        return match key.code {
+            KeyCode::Char('?') | KeyCode::Esc => Action::CloseHelp,
+            _ => Action::None,
+        };
+    }
+    if key.code == KeyCode::Char('?') {
+        return Action::OpenHelp;
+    }
     match app.mode {
         Mode::Browser => match key.code {
             KeyCode::Char('q') => Action::Quit,
@@ -14,6 +23,9 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Esc => Action::ClearFilter,
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
+            KeyCode::Char('g') if app.vim_go_prefix => Action::MoveToTop,
+            KeyCode::Char('g') => Action::StartGoPrefix,
+            KeyCode::Char('G') => Action::MoveToBottom,
             KeyCode::Char('h') => Action::FocusLeft,
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Char('v') => Action::ToggleLayout,
@@ -55,6 +67,17 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             {
                 Action::MoveUp
             }
+            KeyCode::Char('g')
+                if app.browser_filter_focus == BrowserFilterFocus::List && app.vim_go_prefix =>
+            {
+                Action::MoveToTop
+            }
+            KeyCode::Char('g') if app.browser_filter_focus == BrowserFilterFocus::List => {
+                Action::StartGoPrefix
+            }
+            KeyCode::Char('G') if app.browser_filter_focus == BrowserFilterFocus::List => {
+                Action::MoveToBottom
+            }
             KeyCode::Backspace
             | KeyCode::Delete
             | KeyCode::Left
@@ -72,6 +95,9 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
         Mode::Trash => match key.code {
             KeyCode::Char('j') | KeyCode::Down => Action::TrashMoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::TrashMoveUp,
+            KeyCode::Char('g') if app.vim_go_prefix => Action::TrashMoveToTop,
+            KeyCode::Char('g') => Action::StartGoPrefix,
+            KeyCode::Char('G') => Action::TrashMoveToBottom,
             KeyCode::Char('r') => Action::TrashRestore,
             KeyCode::Char('d') | KeyCode::Delete => Action::TrashPurgeRequest,
             KeyCode::Esc | KeyCode::Char('q') => Action::Back,

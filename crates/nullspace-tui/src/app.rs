@@ -177,17 +177,20 @@ pub struct AppState {
     pub mode: Mode,
     pub all_items: Vec<EquationSummary>,
     pub items: Vec<EquationSummary>,
+    pub tag_counts: Vec<(String, usize)>,
     pub trash_items: Vec<TrashEntry>,
     pub trash_cursor: usize,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
     pub browser_filter_focus: BrowserFilterFocus,
+    pub vim_go_prefix: bool,
     pub cursor: usize,
     pub list_scroll_offset: usize,
     pub list_visible_height: u16,
     pub focus: Pane,
     pub layout: LayoutOrientation,
     pub should_quit: bool,
+    pub help_open: bool,
     pub graphics_ok: bool,
     pub cell_size_px: TerminalCellSize,
     pub status: String,
@@ -249,17 +252,20 @@ impl AppState {
             mode: Mode::Browser,
             all_items: Vec::new(),
             items: Vec::new(),
+            tag_counts: Vec::new(),
             trash_items: Vec::new(),
             trash_cursor: 0,
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
             browser_filter_focus: BrowserFilterFocus::Search,
+            vim_go_prefix: false,
             cursor: 0,
             list_scroll_offset: 0,
             list_visible_height: 0,
             focus: Pane::List,
             layout: LayoutOrientation::Vertical,
             should_quit: false,
+            help_open: false,
             graphics_ok,
             cell_size_px,
             status: "Ready".to_string(),
@@ -302,6 +308,7 @@ impl AppState {
     pub fn reload(&mut self) -> anyhow::Result<()> {
         let selected = self.selected_id();
         self.all_items = self.store.list()?;
+        self.tag_counts = self.store.tag_counts()?;
         self.refresh_items()?;
         if let Some(id) = selected {
             if let Some(index) = self.items.iter().position(|item| item.id == id) {
@@ -428,6 +435,23 @@ impl AppState {
             .trash_cursor
             .min(self.trash_items.len().saturating_sub(1));
         Ok(())
+    }
+
+    fn move_browser_cursor_to(&mut self, cursor: usize) {
+        if self.items.is_empty() {
+            return;
+        }
+        let previous = self.cursor;
+        self.cursor = cursor.min(self.items.len() - 1);
+        let visible = list_visible_item_count(self.list_visible_height).max(1);
+        if self.cursor < self.list_scroll_offset {
+            self.list_scroll_offset = self.cursor;
+        } else if self.cursor >= self.list_scroll_offset + visible {
+            self.list_scroll_offset = self.cursor + 1 - visible;
+        }
+        if self.cursor != previous {
+            self.schedule_selected_deferred();
+        }
     }
 
     fn input_cmdline(&mut self, key: crossterm::event::KeyEvent) {
@@ -568,30 +592,42 @@ impl AppState {
     }
 
     pub fn apply(&mut self, action: Action) {
+        if !matches!(action, Action::StartGoPrefix) {
+            self.vim_go_prefix = false;
+        }
         let result: anyhow::Result<()> = (|| match action {
             Action::Quit => {
                 self.should_quit = true;
                 Ok(())
             }
+            Action::OpenHelp => {
+                self.help_open = true;
+                Ok(())
+            }
+            Action::CloseHelp => {
+                self.help_open = false;
+                Ok(())
+            }
             Action::MoveUp => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                    if self.cursor < self.list_scroll_offset {
-                        self.list_scroll_offset = self.cursor;
-                    }
-                    self.schedule_selected_deferred();
-                }
+                self.move_browser_cursor_to(self.cursor.saturating_sub(1));
                 Ok(())
             }
             Action::MoveDown => {
-                if self.cursor + 1 < self.items.len() {
-                    self.cursor += 1;
-                    let visible = list_visible_item_count(self.list_visible_height).max(1);
-                    if self.cursor >= self.list_scroll_offset + visible {
-                        self.list_scroll_offset = self.cursor + 1 - visible;
-                    }
-                    self.schedule_selected_deferred();
+                if !self.items.is_empty() {
+                    self.move_browser_cursor_to(self.cursor + 1);
                 }
+                Ok(())
+            }
+            Action::MoveToTop => {
+                self.move_browser_cursor_to(0);
+                Ok(())
+            }
+            Action::MoveToBottom => {
+                self.move_browser_cursor_to(self.items.len().saturating_sub(1));
+                Ok(())
+            }
+            Action::StartGoPrefix => {
+                self.vim_go_prefix = true;
                 Ok(())
             }
             Action::FocusLeft => {
@@ -630,6 +666,14 @@ impl AppState {
             Action::TrashMoveDown => {
                 let max = self.trash_items.len().saturating_sub(1);
                 self.trash_cursor = (self.trash_cursor + 1).min(max);
+                Ok(())
+            }
+            Action::TrashMoveToTop => {
+                self.trash_cursor = 0;
+                Ok(())
+            }
+            Action::TrashMoveToBottom => {
+                self.trash_cursor = self.trash_items.len().saturating_sub(1);
                 Ok(())
             }
             Action::TrashRestore => {
@@ -2453,7 +2497,10 @@ mod tests {
         command_matches, default_equation_px, effective_render_px, fuzzy_matches_item,
         textarea_from_text, textarea_lines, textarea_text, CmdlineState,
     };
+    use crate::action::Action;
+    use crate::event::map_key;
     use crate::graphics::{Graphics, TerminalCellSize};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use nullspace_core::{EquationId, EquationSummary};
     use ratatui::layout::Size;
     use std::path::PathBuf;
@@ -2597,6 +2644,72 @@ mod tests {
     }
 
     #[test]
+    fn gg_prefix_maps_to_browser_top() {
+        let mut app = test_app();
+        app.cursor = app.items.len().saturating_sub(1);
+        app.list_scroll_offset = app.cursor;
+
+        let first_g = map_key(key('g'), &app);
+        assert!(matches!(first_g, Action::StartGoPrefix));
+        app.apply(first_g);
+        assert!(app.vim_go_prefix);
+
+        let second_g = map_key(key('g'), &app);
+        assert!(matches!(second_g, Action::MoveToTop));
+        app.apply(second_g);
+
+        assert_eq!(app.cursor, 0);
+        assert_eq!(app.list_scroll_offset, 0);
+        assert!(!app.vim_go_prefix);
+    }
+
+    #[test]
+    fn shift_g_moves_browser_to_bottom() {
+        let mut app = test_app();
+        app.list_visible_height = 5;
+
+        let action = map_key(key('G'), &app);
+        app.apply(action);
+
+        assert_eq!(app.cursor, app.items.len() - 1);
+        assert_eq!(app.list_scroll_offset, app.items.len().saturating_sub(2));
+    }
+
+    #[test]
+    fn non_prefix_action_clears_gg_prefix() {
+        let mut app = test_app();
+
+        app.apply(Action::StartGoPrefix);
+        app.apply(Action::None);
+
+        assert!(!app.vim_go_prefix);
+    }
+
+    #[test]
+    fn question_mark_opens_and_closes_help() {
+        let mut app = test_app();
+
+        let open = map_key(key('?'), &app);
+        assert!(matches!(open, Action::OpenHelp));
+        app.apply(open);
+        assert!(app.help_open);
+
+        let close = map_key(key('?'), &app);
+        assert!(matches!(close, Action::CloseHelp));
+        app.apply(close);
+        assert!(!app.help_open);
+    }
+
+    #[test]
+    fn help_modal_consumes_other_keys() {
+        let mut app = test_app();
+        app.help_open = true;
+
+        assert!(matches!(map_key(key('j'), &app), Action::None));
+        assert!(matches!(map_key(key('q'), &app), Action::None));
+    }
+
+    #[test]
     fn effective_render_px_caps_to_preview_height() {
         let size = Some(Size {
             width: 80,
@@ -2694,5 +2807,9 @@ mod tests {
             std::thread::current().id()
         ));
         path
+    }
+
+    fn key(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
     }
 }

@@ -76,6 +76,20 @@ impl Store {
         collect_summaries(rows)
     }
 
+    pub fn tag_counts(&self) -> Result<Vec<(String, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tag, COUNT(DISTINCT equation_id) AS item_count
+             FROM tags
+             GROUP BY tag
+             ORDER BY item_count DESC, tag COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     fn search_scoped(&self, scope: SearchScope, term: &str) -> Result<Vec<EquationSummary>> {
         let term = term.trim();
         if term.is_empty() {
@@ -96,30 +110,6 @@ impl Store {
                  JOIN variables v ON v.equation_id = e.id
                  WHERE lower(v.symbol) LIKE ?1 ESCAPE '\\'
                     OR lower(v.description) LIKE ?1 ESCAPE '\\'
-                 ORDER BY e.name COLLATE NOCASE"
-            }
-            SearchScope::Name => {
-                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
-                 FROM equations e
-                 WHERE lower(e.name) LIKE ?1 ESCAPE '\\'
-                 ORDER BY e.name COLLATE NOCASE"
-            }
-            SearchScope::Latex => {
-                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
-                 FROM equations e
-                 WHERE lower(e.latex) LIKE ?1 ESCAPE '\\'
-                 ORDER BY e.name COLLATE NOCASE"
-            }
-            SearchScope::Related => {
-                "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
-                 FROM equations e
-                 JOIN related r ON r.a = e.id OR r.b = e.id
-                 JOIN equations other ON other.id = CASE WHEN r.a = e.id THEN r.b ELSE r.a END
-                 LEFT JOIN tags t ON t.equation_id = other.id
-                 WHERE lower(other.name)        LIKE ?1 ESCAPE '\\'
-                    OR lower(other.description) LIKE ?1 ESCAPE '\\'
-                    OR lower(other.latex)       LIKE ?1 ESCAPE '\\'
-                    OR lower(t.tag)             LIKE ?1 ESCAPE '\\'
                  ORDER BY e.name COLLATE NOCASE"
             }
         };
@@ -452,9 +442,6 @@ impl Store {
 enum SearchScope {
     Tag,
     Variable,
-    Name,
-    Latex,
-    Related,
 }
 
 fn parse_search_scope(query: &str) -> Option<(SearchScope, &str)> {
@@ -462,9 +449,6 @@ fn parse_search_scope(query: &str) -> Option<(SearchScope, &str)> {
     let scope = match scope.trim().to_ascii_lowercase().as_str() {
         "tag" => SearchScope::Tag,
         "var" => SearchScope::Variable,
-        "name" => SearchScope::Name,
-        "latex" => SearchScope::Latex,
-        "related" => SearchScope::Related,
         _ => return None,
     };
     Some((scope, term))
@@ -814,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn search_supports_scoped_prefixes() {
+    fn search_supports_tag_and_variable_prefixes() {
         let mut store = Store::open_in_memory().unwrap();
         let mut energy = full_equation("Energy");
         energy.tags = vec!["physics".to_string()];
@@ -836,15 +820,42 @@ mod tests {
         let variable = store.search("var:area").unwrap();
         assert_eq!(variable.len(), 1);
         assert_eq!(variable[0].name, "Area");
-        let name = store.search("name:energy").unwrap();
-        assert_eq!(name.len(), 1);
-        assert_eq!(name[0].name, "Energy");
-        let latex = store.search("latex:\\pi").unwrap();
-        assert_eq!(latex.len(), 1);
-        assert_eq!(latex[0].name, "Area");
-        let related = store.search("related:circle").unwrap();
-        assert_eq!(related.len(), 1);
-        assert_eq!(related[0].name, "Energy");
+    }
+
+    #[test]
+    fn removed_search_prefixes_are_not_scoped() {
+        let mut store = Store::open_in_memory().unwrap();
+        let area = Equation::new("Area".to_string(), "A = \\pi r^2".to_string());
+        store.insert(&area).unwrap();
+
+        assert!(store.search("name:area").unwrap().is_empty());
+        assert!(store.search("latex:\\pi").unwrap().is_empty());
+        assert!(store.search("related:area").unwrap().is_empty());
+    }
+
+    #[test]
+    fn tag_counts_are_sorted_by_frequency() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut first = full_equation("First");
+        first.tags = vec!["diagmc".to_string(), "dft".to_string()];
+        let mut second = full_equation("Second");
+        second.tags = vec!["diagmc".to_string()];
+        let mut third = full_equation("Third");
+        third.tags = vec!["polaron".to_string()];
+        store.insert(&first).unwrap();
+        store.insert(&second).unwrap();
+        store.insert(&third).unwrap();
+
+        let counts = store.tag_counts().unwrap();
+
+        assert_eq!(
+            counts,
+            vec![
+                ("diagmc".to_string(), 2),
+                ("dft".to_string(), 1),
+                ("polaron".to_string(), 1),
+            ]
+        );
     }
 
     #[test]

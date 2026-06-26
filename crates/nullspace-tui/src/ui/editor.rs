@@ -220,6 +220,7 @@ fn draw_related_picker(frame: &mut Frame<'_>, app: &mut AppState) {
             query: &query,
             cursor: query_cursor,
             hint: "tab list  enter apply  esc cancel",
+            details: Vec::new(),
             focused: focus == RelatedPickerFocus::Search,
         },
     );

@@ -58,9 +58,6 @@ Prefix the query to narrow it:
 | --- | --- |
 | `tag:physics` | Tags |
 | `var:E` | Variable symbols and descriptions |
-| `name:gauss` | Equation names |
-| `latex:\pi` | LaTeX source |
-| `related:circle` | Equations related to matching equations |
 
 ### Editor
 

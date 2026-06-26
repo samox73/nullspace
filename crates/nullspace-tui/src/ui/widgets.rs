@@ -3,14 +3,16 @@ use ratatui::{
     prelude::Position,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Wrap,
+    },
     Frame,
 };
 use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
 use nullspace_core::{EquationSummary, TrashEntry};
 
-use crate::app::{command_matches, AppState, Mode};
+use crate::app::{command_matches, AppState};
 
 const CMDLINE_WIDTH: u16 = 60;
 const CMDLINE_PROMPT_HEIGHT: u16 = 3;
@@ -86,6 +88,7 @@ pub struct SearchBox<'a> {
     pub query: &'a str,
     pub cursor: usize,
     pub hint: &'a str,
+    pub details: Vec<String>,
     pub focused: bool,
 }
 
@@ -103,13 +106,19 @@ pub fn search_box(frame: &mut Frame<'_>, area: Rect, props: SearchBox<'_>) {
     let input_width = inner.width.saturating_sub(label_width).max(1) as usize;
     let (visible_query, cursor_column) =
         visible_search_input(props.query, props.cursor, input_width);
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::raw(props.label.to_string()),
             Span::raw(visible_query),
         ]),
         Line::styled(props.hint.to_string(), Style::default().fg(Color::DarkGray)),
     ];
+    lines.extend(
+        props
+            .details
+            .into_iter()
+            .map(|line| Line::styled(line, Style::default().fg(Color::DarkGray))),
+    );
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 
@@ -307,21 +316,7 @@ fn centered_image_area(protocol: &ratatui_image::protocol::StatefulProtocol, are
 }
 
 pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let help = match app.mode {
-        Mode::Browser => {
-            "j/k move  / search  enter edit  +/- zoom  v layout  n new  c clone  y copy latex  d delete  q quit"
-        }
-        Mode::Cmdline => "type command  tab/-> accept  enter run  esc cancel",
-        Mode::Search => "tab focus  j/k move list  enter apply  esc clear",
-        Mode::Trash => "r restore  d delete  esc back",
-        Mode::Editor => "tab field  esc back",
-        Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
-        Mode::ReferenceEditor => "tab/shift-tab field  enter save  esc cancel",
-        Mode::ConfirmDelete(_) => "y/d/enter confirm  n/esc cancel",
-        Mode::ConfirmPurge(_) => "y/d/enter permanently delete  n/esc cancel",
-        Mode::ConfirmRemoveRelated(_) => "y remove relation  n/esc cancel",
-        Mode::ConfirmRemoveReference(_) => "y/enter remove  n/esc cancel",
-    };
+    let help = "q quit  ? help";
     let graphics = if app.graphics_ok {
         " | terminal graphics detected"
     } else {
@@ -334,6 +329,115 @@ pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Span::styled(graphics, Style::default().fg(Color::Yellow)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+pub fn help_modal(frame: &mut Frame<'_>) {
+    let rows = help_rows().into_iter().map(|(context, key, action)| {
+        Row::new([Cell::from(context), Cell::from(key), Cell::from(action)])
+    });
+    let area = centered_rect(100, 28, frame.area());
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(18),
+            Constraint::Length(18),
+            Constraint::Min(24),
+        ],
+    )
+    .header(
+        Row::new(["Context", "Key", "Action"])
+            .style(Style::default().fg(Color::Yellow))
+            .bottom_margin(1),
+    )
+    .block(Block::default().title("Keybinds").borders(Borders::ALL))
+    .column_spacing(2);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(table, area);
+}
+
+fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("Global", "?", "Open help"),
+        ("Help modal", "? or Esc", "Close help"),
+        ("Global", "Ctrl-C", "Quit"),
+        ("Browser", "q", "Quit"),
+        (
+            "Browser",
+            "j/k, Up/Down, gg, G",
+            "Move selection; jump top/bottom",
+        ),
+        (
+            "Browser",
+            "Enter, n, c, y, d",
+            "Edit, new, clone, copy LaTeX, delete",
+        ),
+        ("Browser", "/, :, Esc", "Search, command line, clear filter"),
+        (
+            "Browser",
+            "+/=, -, v, h/l",
+            "Zoom, toggle layout, focus panes",
+        ),
+        (
+            "Command line",
+            "Type, Tab/Right, Up/Down",
+            "Edit, accept completion, select command",
+        ),
+        ("Command line", "Enter, Esc", "Run command, cancel"),
+        (
+            "Search",
+            "Type, Tab, Enter, Esc",
+            "Edit query, switch focus, apply, clear; scopes: tag:, var:",
+        ),
+        (
+            "Search list",
+            "j/k, Up/Down, gg, G",
+            "Move selection; jump top/bottom",
+        ),
+        (
+            "Trash",
+            "j/k, Up/Down, gg, G",
+            "Move selection; jump top/bottom",
+        ),
+        (
+            "Trash",
+            "r, d/Delete, Esc/q",
+            "Restore, permanently delete, back",
+        ),
+        (
+            "Editor",
+            "Tab/Shift-Tab, Ctrl-S, Esc",
+            "Field navigation, save, back",
+        ),
+        ("Editor", "Arrows/Home/End", "Move cursor or list selection"),
+        (
+            "References field",
+            "a, Enter, j/k, d",
+            "Add, edit, move, remove reference",
+        ),
+        (
+            "Related field",
+            "r, Enter, j/k, d",
+            "Choose, open, move, remove relation",
+        ),
+        (
+            "Related picker",
+            "Type, Tab, Space",
+            "Search, switch focus, toggle selected",
+        ),
+        (
+            "Related picker",
+            "j/k, Up/Down, Enter, Esc",
+            "Move, apply selection, cancel",
+        ),
+        (
+            "Reference editor",
+            "Tab/Shift-Tab, Enter/Ctrl-S, Esc",
+            "Move fields, save, cancel",
+        ),
+        ("Confirm delete", "y/d/Enter, n/Esc", "Confirm or cancel"),
+        ("Confirm remove", "y, n/Esc", "Remove or cancel"),
+    ]
 }
 
 pub fn trash(frame: &mut Frame<'_>, app: &AppState) {

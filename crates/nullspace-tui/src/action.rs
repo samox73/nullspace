@@ -1,8 +1,13 @@
 #[derive(Debug, Clone)]
 pub enum Action {
     Quit,
+    OpenHelp,
+    CloseHelp,
     MoveUp,
     MoveDown,
+    MoveToTop,
+    MoveToBottom,
+    StartGoPrefix,
     FocusLeft,
     FocusRight,
     ToggleLayout,
@@ -13,6 +18,8 @@ pub enum Action {
     OpenTrash,
     TrashMoveUp,
     TrashMoveDown,
+    TrashMoveToTop,
+    TrashMoveToBottom,
     TrashRestore,
     TrashPurgeRequest,
     OpenCmdline,

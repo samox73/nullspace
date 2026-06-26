@@ -48,6 +48,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             editor::draw(frame, app);
         }
     }
+    if app.help_open {
+        widgets::help_modal(frame);
+    }
     widgets::notification(frame, app);
 }
 

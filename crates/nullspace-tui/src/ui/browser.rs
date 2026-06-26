@@ -6,7 +6,8 @@ use ratatui::{
 use crate::app::{AppState, BrowserFilter, BrowserFilterFocus, CacheStatus, Mode};
 use crate::ui::widgets::{self, EquationListRow};
 
-const SEARCH_BOX_ROWS: u16 = 4;
+const SEARCH_BOX_ROWS: u16 = 9;
+const TAG_SUGGESTION_ROWS: usize = 5;
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
@@ -92,7 +93,76 @@ fn draw_filter_prompt(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             query,
             cursor: app.browser_filter_cursor,
             hint: "tab list  enter apply  esc clear",
+            details: search_details(query, &app.tag_counts),
             focused: app.browser_filter_focus == BrowserFilterFocus::Search,
         },
     );
+}
+
+fn search_details(query: &str, tag_counts: &[(String, usize)]) -> Vec<String> {
+    if query
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("tag:"))
+    {
+        let term = &query[4..];
+        let term = term.trim().to_lowercase();
+        let mut tags = tag_counts
+            .iter()
+            .filter(|(tag, _)| term.is_empty() || tag.to_lowercase().contains(&term))
+            .take(TAG_SUGGESTION_ROWS)
+            .map(|(tag, count)| format!("{count:>3} {tag}"))
+            .collect::<Vec<_>>();
+        if tags.is_empty() {
+            tags.push("no matching tags".to_string());
+        }
+        return tags;
+    }
+
+    if query.trim().is_empty() {
+        vec!["matchers: tag:  var:".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::search_details;
+
+    #[test]
+    fn empty_search_shows_available_matchers() {
+        assert_eq!(
+            search_details("", &[]),
+            vec!["matchers: tag:  var:".to_string()]
+        );
+    }
+
+    #[test]
+    fn tag_search_shows_tag_counts() {
+        let tags = vec![
+            ("diagmc".to_string(), 34),
+            ("dft".to_string(), 14),
+            ("polaron".to_string(), 5),
+        ];
+
+        assert_eq!(
+            search_details("tag:", &tags),
+            vec![
+                " 34 diagmc".to_string(),
+                " 14 dft".to_string(),
+                "  5 polaron".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn tag_search_filters_tag_counts() {
+        let tags = vec![
+            ("diagmc".to_string(), 34),
+            ("dft".to_string(), 14),
+            ("polaron".to_string(), 5),
+        ];
+
+        assert_eq!(search_details("TAG:df", &tags), vec![" 14 dft".to_string()]);
+    }
 }
