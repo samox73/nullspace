@@ -15,7 +15,8 @@
     "tags": [
       "dft",
       "exchange-correlation",
-      "foundations"
+      "foundations",
+      "many-body"
     ],
     "variables": [
       {
@@ -377,7 +378,8 @@
     ],
     "tags": [
       "dft",
-      "foundations"
+      "foundations",
+      "many-body"
     ],
     "variables": [
       {
@@ -698,6 +700,7 @@
     "tags": [
       "diagmc",
       "many-body",
+      "self-energy",
       "gw",
       "dft"
     ],
@@ -870,6 +873,7 @@
     "tags": [
       "dft",
       "foundations",
+      "many-body",
       "hohenberg-kohn"
     ],
     "variables": [
@@ -916,6 +920,7 @@
     "tags": [
       "dft",
       "foundations",
+      "many-body",
       "hohenberg-kohn"
     ],
     "variables": [
@@ -1469,7 +1474,8 @@
     ],
     "tags": [
       "dft",
-      "foundations"
+      "foundations",
+      "many-body"
     ],
     "variables": [
       {
@@ -1640,6 +1646,7 @@
     "tags": [
       "diagmc",
       "many-body",
+      "greens-function",
       "matsubara"
     ],
     "variables": [
@@ -2474,6 +2481,7 @@
     "tags": [
       "dft",
       "foundations",
+      "many-body",
       "hohenberg-kohn"
     ],
     "variables": [
