@@ -106,13 +106,16 @@ pub fn search_box(frame: &mut Frame<'_>, area: Rect, props: SearchBox<'_>) {
     let input_width = inner.width.saturating_sub(label_width).max(1) as usize;
     let (visible_query, cursor_column) =
         visible_search_input(props.query, props.cursor, input_width);
-    let mut lines = vec![
-        Line::from(vec![
-            Span::raw(props.label.to_string()),
-            Span::raw(visible_query),
-        ]),
-        Line::styled(props.hint.to_string(), Style::default().fg(Color::DarkGray)),
-    ];
+    let mut lines = vec![Line::from(vec![
+        Span::raw(props.label.to_string()),
+        Span::raw(visible_query),
+    ])];
+    if !props.hint.is_empty() {
+        lines.push(Line::styled(
+            props.hint.to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     lines.extend(
         props
             .details

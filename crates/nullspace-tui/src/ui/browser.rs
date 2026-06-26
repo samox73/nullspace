@@ -6,7 +6,7 @@ use ratatui::{
 use crate::app::{AppState, BrowserFilter, BrowserFilterFocus, CacheStatus, Mode};
 use crate::ui::widgets::{self, EquationListRow};
 
-const SEARCH_BOX_ROWS: u16 = 9;
+const SEARCH_BOX_BASE_ROWS: u16 = 3;
 const TAG_SUGGESTION_ROWS: usize = 5;
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             EquationListRow::new(marker, item)
         })
         .collect::<Vec<_>>();
-    let (search_area, list_area) = search_and_list_areas(list_area, app.mode);
+    let (search_area, list_area) = search_and_list_areas(list_area, app);
 
     app.list_visible_height = list_area.height.saturating_sub(2);
     let (list, mut state) = widgets::equation_list(
@@ -67,21 +67,25 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     widgets::status_bar(frame, outer[1], app);
 }
 
-fn search_and_list_areas(area: Rect, mode: Mode) -> (Option<Rect>, Rect) {
-    if !matches!(mode, Mode::Search) {
+fn search_and_list_areas(area: Rect, app: &AppState) -> (Option<Rect>, Rect) {
+    if !matches!(app.mode, Mode::Search) {
         return (None, area);
     }
 
+    let rows = match &app.browser_filter {
+        BrowserFilter::Search(query) => search_box_rows(query, &app.tag_counts),
+        BrowserFilter::None => SEARCH_BOX_BASE_ROWS,
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(SEARCH_BOX_ROWS), Constraint::Min(1)])
+        .constraints([Constraint::Length(rows), Constraint::Min(1)])
         .split(area);
     (Some(chunks[0]), chunks[1])
 }
 
 fn draw_filter_prompt(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let (title, label, query) = match &app.browser_filter {
-        BrowserFilter::Search(query) => ("Search", "Query: ", query.as_str()),
+        BrowserFilter::Search(query) => ("Search (tag: var:)", "Query: ", query.as_str()),
         BrowserFilter::None => return,
     };
     widgets::search_box(
@@ -92,11 +96,15 @@ fn draw_filter_prompt(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             label,
             query,
             cursor: app.browser_filter_cursor,
-            hint: "tab list  enter apply  esc clear",
+            hint: "",
             details: search_details(query, &app.tag_counts),
             focused: app.browser_filter_focus == BrowserFilterFocus::Search,
         },
     );
+}
+
+fn search_box_rows(query: &str, tag_counts: &[(String, usize)]) -> u16 {
+    SEARCH_BOX_BASE_ROWS + search_details(query, tag_counts).len() as u16
 }
 
 fn search_details(query: &str, tag_counts: &[(String, usize)]) -> Vec<String> {
@@ -118,23 +126,17 @@ fn search_details(query: &str, tag_counts: &[(String, usize)]) -> Vec<String> {
         return tags;
     }
 
-    if query.trim().is_empty() {
-        vec!["matchers: tag:  var:".to_string()]
-    } else {
-        Vec::new()
-    }
+    Vec::new()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::search_details;
+    use super::{search_box_rows, search_details, SEARCH_BOX_BASE_ROWS};
 
     #[test]
-    fn empty_search_shows_available_matchers() {
-        assert_eq!(
-            search_details("", &[]),
-            vec!["matchers: tag:  var:".to_string()]
-        );
+    fn empty_search_has_no_extra_details() {
+        assert_eq!(search_details("", &[]), Vec::<String>::new());
+        assert_eq!(search_box_rows("", &[]), SEARCH_BOX_BASE_ROWS);
     }
 
     #[test]
@@ -164,5 +166,12 @@ mod tests {
         ];
 
         assert_eq!(search_details("TAG:df", &tags), vec![" 14 dft".to_string()]);
+    }
+
+    #[test]
+    fn tag_search_expands_to_fit_suggestions() {
+        let tags = vec![("diagmc".to_string(), 34), ("dft".to_string(), 14)];
+
+        assert_eq!(search_box_rows("tag:", &tags), SEARCH_BOX_BASE_ROWS + 2);
     }
 }
