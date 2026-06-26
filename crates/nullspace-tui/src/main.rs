@@ -149,9 +149,15 @@ fn run(
         let frame_start = std::time::Instant::now();
 
         while ct_event::poll(Duration::ZERO)? {
-            if let ct_event::Event::Key(key) = ct_event::read()? {
-                let action = event::map_key(key, app);
-                app.apply(action);
+            match ct_event::read()? {
+                ct_event::Event::Key(key) => {
+                    let action = event::map_key(key, app);
+                    app.apply(action);
+                }
+                ct_event::Event::Resize(_, _) | ct_event::Event::FocusGained => {
+                    app.refresh_graphics_if_changed();
+                }
+                _ => {}
             }
         }
 

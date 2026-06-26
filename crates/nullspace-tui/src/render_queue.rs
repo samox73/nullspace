@@ -74,16 +74,9 @@ impl RenderQueue {
                 }
 
                 // Drain completed task notifications.
-                loop {
-                    match done_rx.try_recv() {
-                        Ok(key) => {
-                            inflight.remove(&key);
-                            if inflight_count > 0 {
-                                inflight_count -= 1;
-                            }
-                        }
-                        Err(_) => break,
-                    }
+                while let Ok(key) = done_rx.try_recv() {
+                    inflight.remove(&key);
+                    inflight_count = inflight_count.saturating_sub(1);
                 }
 
                 // Dispatch pending jobs to rayon up to max_concurrent.

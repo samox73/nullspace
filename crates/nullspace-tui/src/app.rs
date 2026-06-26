@@ -30,6 +30,7 @@ const RESULT_PULL_LIMIT: usize = 64;
 const PROTOCOL_RESULTS_PER_TICK: usize = 16;
 const QUEUE_RESULTS_PER_TICK: usize = 4;
 const RESULT_TICK_BUDGET: Duration = Duration::from_millis(4);
+const GRAPHICS_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
 const MIN_RENDER_PX: u32 = 16;
 const MAX_RENDER_PX: u32 = 512;
 const FALLBACK_TERMINAL_CELL_PX_HEIGHT: u32 = 26;
@@ -202,6 +203,7 @@ pub struct AppState {
     protocol_warm_inflight: HashMap<u64, Size>,
     protocol_cache: HashMap<u64, StatefulProtocol>,
     protocol_cache_order: VecDeque<u64>,
+    protocol_cache_epoch: u64,
     preview_cache_key: u64,
     preview_warm_size: Option<Size>,
     graphics: Graphics,
@@ -270,6 +272,7 @@ impl AppState {
             protocol_warm_inflight: HashMap::new(),
             protocol_cache: HashMap::new(),
             protocol_cache_order: VecDeque::new(),
+            protocol_cache_epoch: 0,
             preview_cache_key: 0,
             preview_warm_size: None,
             graphics,
@@ -328,6 +331,26 @@ impl AppState {
         if matches!(self.mode, Mode::Browser | Mode::Search) {
             self.schedule_warm_neighbors();
         }
+    }
+
+    pub fn refresh_graphics_if_changed(&mut self) {
+        let Some(graphics) = Graphics::probe(GRAPHICS_REFRESH_TIMEOUT) else {
+            return;
+        };
+        if graphics.cell_size_px == self.cell_size_px && graphics.graphics_ok == self.graphics_ok {
+            self.graphics = graphics;
+            return;
+        }
+
+        self.graphics = graphics;
+        self.graphics_ok = self.graphics.graphics_ok;
+        self.cell_size_px = self.graphics.cell_size_px;
+        self.invalidate_render_caches();
+        self.status = format!(
+            "Terminal cell size: {}x{} px",
+            self.cell_size_px.width, self.cell_size_px.height
+        );
+        self.schedule_selected();
     }
 
     pub fn cache_status_for(&self, latex: &str, px: u32) -> CacheStatus {
@@ -843,10 +866,14 @@ impl AppState {
     fn handle_protocol_result(&mut self, result: ProtocolWarmResult) {
         match result.outcome {
             ProtocolWarmOutcome::Ready {
+                epoch,
                 key,
                 size,
                 protocol,
             } => {
+                if epoch != self.protocol_cache_epoch {
+                    return;
+                }
                 self.remove_protocol_inflight(key, size);
                 let is_current_size = self.preview_warm_size == Some(size);
                 if key == self.preview_cache_key
@@ -862,7 +889,10 @@ impl AppState {
                     self.remember_protocol(key, *protocol);
                 }
             }
-            ProtocolWarmOutcome::Failed { key, size } => {
+            ProtocolWarmOutcome::Failed { epoch, key, size } => {
+                if epoch != self.protocol_cache_epoch {
+                    return;
+                }
                 self.remove_protocol_inflight(key, size);
                 if key == self.preview_cache_key
                     && self.preview_warm_size == Some(size)
@@ -872,7 +902,10 @@ impl AppState {
                 }
             }
             ProtocolWarmOutcome::Skipped(jobs) => {
-                for (key, size) in jobs {
+                for (epoch, key, size) in jobs {
+                    if epoch != self.protocol_cache_epoch {
+                        continue;
+                    }
                     self.remove_protocol_inflight(key, size);
                     if key == self.preview_cache_key
                         && self.preview_warm_size == Some(size)
@@ -889,7 +922,12 @@ impl AppState {
         if self.queued_keys.contains(&key) || self.render_failed.contains(&key) {
             return;
         }
-        self.render_queue.submit(QueueJob { key, latex, px, priority });
+        self.render_queue.submit(QueueJob {
+            key,
+            latex,
+            px,
+            priority,
+        });
         self.queued_keys.insert(key);
     }
 
@@ -1063,7 +1101,12 @@ impl AppState {
         }
 
         // Image not in any cache — submit to the render queue.
-        self.submit_to_queue(new_key, self.preview_latex.clone(), self.preview_render_px, 0);
+        self.submit_to_queue(
+            new_key,
+            self.preview_latex.clone(),
+            self.preview_render_px,
+            0,
+        );
         self.dispatched_generation = self.generation;
     }
 
@@ -1127,6 +1170,7 @@ impl AppState {
 
         self.protocol_warm_inflight.insert(key, available);
         self.protocol_warm_worker.send(vec![ProtocolWarmJob {
+            epoch: self.protocol_cache_epoch,
             key,
             source: ProtocolWarmSource::Image {
                 display,
@@ -1176,6 +1220,7 @@ impl AppState {
         };
         self.protocol_warm_inflight.insert(key, available);
         self.protocol_warm_worker.send(vec![ProtocolWarmJob {
+            epoch: self.protocol_cache_epoch,
             key,
             source,
             size: available,
@@ -1864,6 +1909,19 @@ impl AppState {
         }
     }
 
+    fn invalidate_render_caches(&mut self) {
+        self.protocol_cache_epoch = self.protocol_cache_epoch.saturating_add(1);
+        self.preview_protocol = None;
+        self.cache.clear();
+        self.cache_order.clear();
+        self.protocol_cache.clear();
+        self.protocol_cache_order.clear();
+        self.protocol_warm_inflight.clear();
+        self.pending_protocol_results.clear();
+        self.pending_queue_results.clear();
+        self.needs_warm_submit = true;
+    }
+
     fn remember_protocol(&mut self, key: u64, protocol: StatefulProtocol) {
         self.protocol_cache_order
             .retain(|cached_key| *cached_key != key);
@@ -2177,7 +2235,10 @@ mod tests {
             width: 80,
             height: 5,
         });
-        let cell_size = TerminalCellSize { height: 20 };
+        let cell_size = TerminalCellSize {
+            width: 10,
+            height: 20,
+        };
 
         assert_eq!(effective_render_px(512, size, cell_size), 100);
     }
@@ -2188,7 +2249,10 @@ mod tests {
             width: 80,
             height: 20,
         });
-        let cell_size = TerminalCellSize { height: 20 };
+        let cell_size = TerminalCellSize {
+            width: 10,
+            height: 20,
+        };
 
         assert_eq!(effective_render_px(48, size, cell_size), 48);
     }
@@ -2199,7 +2263,10 @@ mod tests {
             width: 80,
             height: 5,
         });
-        let cell_size = TerminalCellSize { height: 18 };
+        let cell_size = TerminalCellSize {
+            width: 9,
+            height: 18,
+        };
 
         assert_eq!(effective_render_px(512, size, cell_size), 90);
     }
@@ -2210,14 +2277,20 @@ mod tests {
             width: 80,
             height: 5,
         });
-        let cell_size = TerminalCellSize { height: 26 };
+        let cell_size = TerminalCellSize {
+            width: 12,
+            height: 26,
+        };
 
         assert_eq!(effective_render_px(512, size, cell_size), 130);
     }
 
     #[test]
     fn default_equation_px_is_five_cell_heights() {
-        let cell_size = TerminalCellSize { height: 20 };
+        let cell_size = TerminalCellSize {
+            width: 10,
+            height: 20,
+        };
 
         assert_eq!(default_equation_px(cell_size), 100);
     }

@@ -1,9 +1,10 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use ratatui::layout::Size;
 use ratatui_image::{
-    picker::{Picker, ProtocolType},
+    picker::{cap_parser::QueryStdioOptions, Capability, Picker, ProtocolType},
     protocol::StatefulProtocol,
 };
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Graphics {
@@ -13,8 +14,9 @@ pub struct Graphics {
     palette: Option<TerminalPalette>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalCellSize {
+    pub width: u16,
     pub height: u16,
 }
 
@@ -27,6 +29,24 @@ pub(crate) struct TerminalPalette {
 impl Graphics {
     pub fn detect() -> Self {
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        Self::from_picker(picker)
+    }
+
+    pub fn probe(timeout: Duration) -> Option<Self> {
+        let picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
+            timeout,
+            ..QueryStdioOptions::default()
+        })
+        .ok()?;
+        if !picker.capabilities().iter().any(|capability| {
+            matches!(capability, Capability::CellSize(Some((width, height))) if *width > 0 && *height > 0)
+        }) {
+            return None;
+        }
+        Some(Self::from_picker(picker))
+    }
+
+    fn from_picker(picker: Picker) -> Self {
         let graphics_ok =
             picker.protocol_type() != ProtocolType::Halfblocks || terminal_graphics_detected();
         let font_size = picker.font_size();
@@ -35,6 +55,7 @@ impl Graphics {
             picker,
             graphics_ok,
             cell_size_px: TerminalCellSize {
+                width: font_size.width,
                 height: font_size.height,
             },
             palette,
@@ -96,7 +117,7 @@ fn centered_cell_row_height_px(
     let available_rows = u32::from(available_rows);
     if available_rows >= rows {
         rows = available_rows;
-    } else if image_height % cell_height == 0 && rows % 2 == 0 {
+    } else if image_height.is_multiple_of(cell_height) && rows % 2 == 0 {
         rows += 1;
     }
     rows.saturating_mul(cell_height)
@@ -320,7 +341,14 @@ mod tests {
             image.put_pixel(1, y, Rgba([0, 0, 0, 255]));
         }
 
-        let padded = center_visible_content_in_cell_rows(image, TerminalCellSize { height: 20 }, 0);
+        let padded = center_visible_content_in_cell_rows(
+            image,
+            TerminalCellSize {
+                width: 10,
+                height: 20,
+            },
+            0,
+        );
 
         assert_eq!(padded.height(), 40);
         assert_eq!(padded.get_pixel(1, 3).0, [0, 0, 0, 255]);
@@ -330,11 +358,25 @@ mod tests {
     #[test]
     fn exact_even_cell_height_promotes_to_odd_cell_count() {
         assert_eq!(
-            centered_cell_row_height_px(40, TerminalCellSize { height: 20 }, 0),
+            centered_cell_row_height_px(
+                40,
+                TerminalCellSize {
+                    width: 10,
+                    height: 20,
+                },
+                0
+            ),
             60
         );
         assert_eq!(
-            centered_cell_row_height_px(80, TerminalCellSize { height: 20 }, 0),
+            centered_cell_row_height_px(
+                80,
+                TerminalCellSize {
+                    width: 10,
+                    height: 20,
+                },
+                0
+            ),
             100
         );
     }
@@ -346,7 +388,14 @@ mod tests {
             image.put_pixel(1, y, Rgba([0, 0, 0, 255]));
         }
 
-        let padded = center_visible_content_in_cell_rows(image, TerminalCellSize { height: 20 }, 0);
+        let padded = center_visible_content_in_cell_rows(
+            image,
+            TerminalCellSize {
+                width: 10,
+                height: 20,
+            },
+            0,
+        );
 
         assert_eq!(padded.height(), 100);
         assert_eq!(padded.get_pixel(1, 9).0, [255, 255, 255, 255]);
@@ -358,7 +407,14 @@ mod tests {
     #[test]
     fn exact_odd_cell_height_stays_on_its_middle_row() {
         assert_eq!(
-            centered_cell_row_height_px(60, TerminalCellSize { height: 20 }, 0),
+            centered_cell_row_height_px(
+                60,
+                TerminalCellSize {
+                    width: 10,
+                    height: 20,
+                },
+                0
+            ),
             60
         );
     }
@@ -370,7 +426,14 @@ mod tests {
             image.put_pixel(1, y, Rgba([0, 0, 0, 255]));
         }
 
-        let padded = center_visible_content_in_cell_rows(image, TerminalCellSize { height: 20 }, 5);
+        let padded = center_visible_content_in_cell_rows(
+            image,
+            TerminalCellSize {
+                width: 10,
+                height: 20,
+            },
+            5,
+        );
 
         assert_eq!(padded.height(), 100);
         assert_eq!(padded.get_pixel(1, 12).0, [255, 255, 255, 255]);

@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use crate::graphics::Graphics;
 
 pub struct ProtocolWarmJob {
+    pub epoch: u64,
     pub key: u64,
     pub source: ProtocolWarmSource,
     pub size: Size,
@@ -26,15 +27,17 @@ pub enum ProtocolWarmSource {
 
 pub enum ProtocolWarmOutcome {
     Ready {
+        epoch: u64,
         key: u64,
         size: Size,
         protocol: Box<StatefulProtocol>,
     },
     Failed {
+        epoch: u64,
         key: u64,
         size: Size,
     },
-    Skipped(Vec<(u64, Size)>),
+    Skipped(Vec<(u64, u64, Size)>),
 }
 
 pub struct ProtocolWarmResult {
@@ -107,10 +110,11 @@ fn warm_protocols(jobs: Vec<ProtocolWarmJob>, result_tx: &Sender<ProtocolWarmRes
 }
 
 fn warm_protocol(job: ProtocolWarmJob, result_tx: &Sender<ProtocolWarmResult>) {
+    let epoch = job.epoch;
     let key = job.key;
     let size = job.size;
     let outcome = catch_unwind(AssertUnwindSafe(|| encode_protocol(job)))
-        .unwrap_or(ProtocolWarmOutcome::Failed { key, size });
+        .unwrap_or(ProtocolWarmOutcome::Failed { epoch, key, size });
     let _ = result_tx.send(ProtocolWarmResult { outcome });
 }
 
@@ -129,6 +133,7 @@ fn encode_protocol(job: ProtocolWarmJob) -> ProtocolWarmOutcome {
     let fit_size = protocol.size_for(Resize::Fit(None), job.size);
     if fit_size.width == 0 || fit_size.height == 0 {
         return ProtocolWarmOutcome::Failed {
+            epoch: job.epoch,
             key: job.key,
             size: job.size,
         };
@@ -136,11 +141,13 @@ fn encode_protocol(job: ProtocolWarmJob) -> ProtocolWarmOutcome {
     protocol.resize_encode(&Resize::Fit(None), fit_size);
     match protocol.last_encoding_result() {
         Some(Ok(())) => ProtocolWarmOutcome::Ready {
+            epoch: job.epoch,
             key: job.key,
             size: job.size,
             protocol: Box::new(protocol),
         },
         Some(Err(_)) | None => ProtocolWarmOutcome::Failed {
+            epoch: job.epoch,
             key: job.key,
             size: job.size,
         },
@@ -150,7 +157,7 @@ fn encode_protocol(job: ProtocolWarmJob) -> ProtocolWarmOutcome {
 fn send_skipped(jobs: Vec<ProtocolWarmJob>, result_tx: &Sender<ProtocolWarmResult>) {
     let skipped = jobs
         .into_iter()
-        .map(|job| (job.key, job.size))
+        .map(|job| (job.epoch, job.key, job.size))
         .collect::<Vec<_>>();
     if !skipped.is_empty() {
         let _ = result_tx.send(ProtocolWarmResult {
