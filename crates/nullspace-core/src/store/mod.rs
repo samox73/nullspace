@@ -90,6 +90,44 @@ impl Store {
             .map_err(Into::into)
     }
 
+    pub fn by_tag(&self, tag: &str) -> Result<Vec<EquationSummary>> {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return self.list();
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+             FROM equations e
+             JOIN tags t ON t.equation_id = e.id
+             WHERE lower(t.tag) = lower(?1)
+             ORDER BY e.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map(params![tag], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    pub fn untagged(&self) -> Result<Vec<EquationSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.name, e.description, e.latex, e.px_height
+             FROM equations e
+             LEFT JOIN tags t ON t.equation_id = e.id
+             WHERE t.equation_id IS NULL
+             ORDER BY e.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    pub fn untagged_count(&self) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM equations e
+             WHERE NOT EXISTS (SELECT 1 FROM tags t WHERE t.equation_id = e.id)",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     fn search_scoped(&self, scope: SearchScope, term: &str) -> Result<Vec<EquationSummary>> {
         let term = term.trim();
         if term.is_empty() {
@@ -855,6 +893,65 @@ mod tests {
                 ("dft".to_string(), 1),
                 ("polaron".to_string(), 1),
             ]
+        );
+    }
+
+    #[test]
+    fn by_tag_matches_exactly() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut dft = full_equation("DFT");
+        dft.tags = vec!["dft".to_string()];
+        let mut dft_plus_u = full_equation("DFT+U");
+        dft_plus_u.tags = vec!["dft-plus-u".to_string()];
+        store.insert(&dft).unwrap();
+        store.insert(&dft_plus_u).unwrap();
+
+        let matches = store.by_tag("dft").unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "DFT");
+    }
+
+    #[test]
+    fn by_tag_is_case_insensitive() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut eq = full_equation("Energy");
+        eq.tags = vec!["DFT".to_string()];
+        store.insert(&eq).unwrap();
+
+        let matches = store.by_tag("dft").unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "Energy");
+    }
+
+    #[test]
+    fn untagged_returns_only_equations_without_tags() {
+        let mut store = Store::open_in_memory().unwrap();
+        let tagged = full_equation("Tagged");
+        let untagged = Equation::new("Untagged".to_string(), "x".to_string());
+        store.insert(&tagged).unwrap();
+        store.insert(&untagged).unwrap();
+
+        let matches = store.untagged().unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "Untagged");
+    }
+
+    #[test]
+    fn untagged_count_matches_untagged_len() {
+        let mut store = Store::open_in_memory().unwrap();
+        let tagged = full_equation("Tagged");
+        let first = Equation::new("First untagged".to_string(), "a".to_string());
+        let second = Equation::new("Second untagged".to_string(), "b".to_string());
+        store.insert(&tagged).unwrap();
+        store.insert(&first).unwrap();
+        store.insert(&second).unwrap();
+
+        assert_eq!(
+            store.untagged_count().unwrap(),
+            store.untagged().unwrap().len()
         );
     }
 

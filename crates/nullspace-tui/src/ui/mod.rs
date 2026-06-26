@@ -35,6 +35,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 );
             }
         }
+        Mode::TagPicker => {
+            widgets::clear_cmdline_overlay(frame, cmdline_area);
+            widgets::tag_picker(frame, app);
+        }
         Mode::Cmdline => {
             browser::draw(frame, app);
             widgets::cmdline(frame, cmdline_area, app);

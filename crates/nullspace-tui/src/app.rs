@@ -47,6 +47,7 @@ pub enum Mode {
     RelatedPicker,
     ReferenceEditor,
     Trash,
+    TagPicker,
     ConfirmDelete(EquationId),
     ConfirmPurge(EquationId),
     ConfirmRemoveRelated(EquationId),
@@ -153,10 +154,12 @@ pub enum RelatedPickerFocus {
     List,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserFilter {
     None,
     Search(String),
+    Tag(String),
+    Untagged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +175,12 @@ pub struct CmdlineState {
     pub selected: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagPickerRow {
+    Untagged { count: usize },
+    Tag { name: String, count: usize },
+}
+
 pub struct AppState {
     pub store: Store,
     pub mode: Mode,
@@ -180,6 +189,10 @@ pub struct AppState {
     pub tag_counts: Vec<(String, usize)>,
     pub trash_items: Vec<TrashEntry>,
     pub trash_cursor: usize,
+    pub tag_picker_cursor: usize,
+    pub tag_picker_scroll_offset: usize,
+    pub tag_picker_visible_height: u16,
+    pub untagged_count: usize,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
     pub browser_filter_focus: BrowserFilterFocus,
@@ -255,6 +268,10 @@ impl AppState {
             tag_counts: Vec::new(),
             trash_items: Vec::new(),
             trash_cursor: 0,
+            tag_picker_cursor: 0,
+            tag_picker_scroll_offset: 0,
+            tag_picker_visible_height: 0,
+            untagged_count: 0,
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
             browser_filter_focus: BrowserFilterFocus::Search,
@@ -309,6 +326,7 @@ impl AppState {
         let selected = self.selected_id();
         self.all_items = self.store.list()?;
         self.tag_counts = self.store.tag_counts()?;
+        self.untagged_count = self.store.untagged_count()?;
         self.refresh_items()?;
         if let Some(id) = selected {
             if let Some(index) = self.items.iter().position(|item| item.id == id) {
@@ -334,7 +352,25 @@ impl AppState {
         match &self.browser_filter {
             BrowserFilter::None => "Equations".to_string(),
             BrowserFilter::Search(query) => format!("Search: {}", query),
+            BrowserFilter::Tag(tag) => format!("Tag: {tag}"),
+            BrowserFilter::Untagged => "Untagged".to_string(),
         }
+    }
+
+    pub fn tag_picker_rows(&self) -> Vec<TagPickerRow> {
+        let mut rows = Vec::new();
+        if self.untagged_count > 0 {
+            rows.push(TagPickerRow::Untagged {
+                count: self.untagged_count,
+            });
+        }
+        let mut tags = self.tag_counts.clone();
+        tags.sort_by_key(|(name, _)| name.to_lowercase());
+        rows.extend(
+            tags.into_iter()
+                .map(|(name, count)| TagPickerRow::Tag { name, count }),
+        );
+        rows
     }
 
     pub fn set_preview_warm_size(&mut self, size: Size) {
@@ -412,6 +448,8 @@ impl AppState {
         self.items = match &self.browser_filter {
             BrowserFilter::None => self.all_items.clone(),
             BrowserFilter::Search(query) => self.store.search(query)?,
+            BrowserFilter::Tag(tag) => self.store.by_tag(tag)?,
+            BrowserFilter::Untagged => self.store.untagged()?,
         };
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
         self.list_scroll_offset = self.list_scroll_offset.min(self.cursor);
@@ -435,6 +473,22 @@ impl AppState {
             .trash_cursor
             .min(self.trash_items.len().saturating_sub(1));
         Ok(())
+    }
+
+    fn move_tag_picker_cursor_to(&mut self, cursor: usize) {
+        let rows_len = self.tag_picker_rows().len();
+        if rows_len == 0 {
+            self.tag_picker_cursor = 0;
+            self.tag_picker_scroll_offset = 0;
+            return;
+        }
+        self.tag_picker_cursor = cursor.min(rows_len - 1);
+        let visible = self.tag_picker_visible_height.max(1) as usize;
+        if self.tag_picker_cursor < self.tag_picker_scroll_offset {
+            self.tag_picker_scroll_offset = self.tag_picker_cursor;
+        } else if self.tag_picker_cursor >= self.tag_picker_scroll_offset + visible {
+            self.tag_picker_scroll_offset = self.tag_picker_cursor + 1 - visible;
+        }
     }
 
     fn move_browser_cursor_to(&mut self, cursor: usize) {
@@ -547,7 +601,9 @@ impl AppState {
         use crossterm::event::KeyCode;
         let query = match &mut self.browser_filter {
             BrowserFilter::Search(query) => query,
-            BrowserFilter::None => return Ok(()),
+            BrowserFilter::None | BrowserFilter::Tag(_) | BrowserFilter::Untagged => {
+                return Ok(());
+            }
         };
         self.browser_filter_cursor = self.browser_filter_cursor.min(query.len());
         let mut changed = false;
@@ -652,6 +708,13 @@ impl AppState {
             }
             Action::CopyCurrent => self.copy_current_equation(),
             Action::CopyLatexToClipboard => self.copy_selected_latex_to_clipboard(),
+            Action::OpenTags => {
+                self.tag_picker_cursor = 0;
+                self.tag_picker_scroll_offset = 0;
+                self.mode = Mode::TagPicker;
+                self.status = format!("Tags: {} tag(s)", self.tag_counts.len());
+                Ok(())
+            }
             Action::OpenTrash => {
                 self.reload_trash()?;
                 self.trash_cursor = 0;
@@ -697,6 +760,43 @@ impl AppState {
                 if let Some(id) = self.selected_trash_id() {
                     self.mode = Mode::ConfirmPurge(id);
                 }
+                Ok(())
+            }
+            Action::TagPickerMoveUp => {
+                self.move_tag_picker_cursor_to(self.tag_picker_cursor.saturating_sub(1));
+                Ok(())
+            }
+            Action::TagPickerMoveDown => {
+                self.move_tag_picker_cursor_to(self.tag_picker_cursor + 1);
+                Ok(())
+            }
+            Action::TagPickerMoveToTop => {
+                self.move_tag_picker_cursor_to(0);
+                Ok(())
+            }
+            Action::TagPickerMoveToBottom => {
+                self.move_tag_picker_cursor_to(self.tag_picker_rows().len().saturating_sub(1));
+                Ok(())
+            }
+            Action::TagPickerApply => {
+                let rows = self.tag_picker_rows();
+                if let Some(row) = rows.get(self.tag_picker_cursor) {
+                    self.browser_filter = match row {
+                        TagPickerRow::Untagged { .. } => BrowserFilter::Untagged,
+                        TagPickerRow::Tag { name, .. } => BrowserFilter::Tag(name.clone()),
+                    };
+                    self.cursor = 0;
+                    self.refresh_items()?;
+                    self.status =
+                        format!("{}: {} match(es)", self.browser_title(), self.items.len());
+                    self.schedule_selected();
+                }
+                self.mode = Mode::Browser;
+                Ok(())
+            }
+            Action::TagPickerCancel => {
+                self.mode = Mode::Browser;
+                self.schedule_selected();
                 Ok(())
             }
             Action::DeleteRequest => {
@@ -854,6 +954,7 @@ impl AppState {
                     }
                     Mode::Search | Mode::Cmdline | Mode::Browser => Mode::Browser,
                     Mode::Trash => Mode::Browser,
+                    Mode::TagPicker => Mode::Browser,
                 };
                 self.schedule_selected();
                 Ok(())
@@ -2396,7 +2497,7 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     }
 }
 
-const COMMANDS: [&str; 5] = ["delete", "exit", "new", "search", "trash"];
+const COMMANDS: [&str; 6] = ["delete", "exit", "new", "search", "tags", "trash"];
 
 pub fn command_matches(prefix: &str) -> Vec<&'static str> {
     COMMANDS
@@ -2428,6 +2529,7 @@ fn command_action(command: &str) -> Option<Action> {
         "exit" => Some(Action::Quit),
         "new" => Some(Action::NewEquation),
         "search" => Some(Action::StartSearch),
+        "tags" => Some(Action::OpenTags),
         "trash" => Some(Action::OpenTrash),
         _ => None,
     }
@@ -2501,7 +2603,7 @@ mod tests {
     use crate::event::map_key;
     use crate::graphics::{Graphics, TerminalCellSize};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use nullspace_core::{EquationId, EquationSummary};
+    use nullspace_core::{Equation, EquationId, EquationSummary};
     use ratatui::layout::Size;
     use std::path::PathBuf;
 
@@ -2544,10 +2646,10 @@ mod tests {
     fn command_matching_filters_by_prefix() {
         assert_eq!(
             command_matches(""),
-            ["delete", "exit", "new", "search", "trash"]
+            ["delete", "exit", "new", "search", "tags", "trash"]
         );
         assert_eq!(command_matches("s"), ["search"]);
-        assert_eq!(command_matches("t"), ["trash"]);
+        assert_eq!(command_matches("t"), ["tags", "trash"]);
         assert_eq!(command_matches("D"), ["delete"]);
     }
 
@@ -2630,6 +2732,135 @@ mod tests {
 
         assert!(matches!(app.mode, super::Mode::Trash));
         assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn execute_cmdline_tags_opens_tag_picker() {
+        let mut app = test_app_with_cmdline("tags");
+
+        app.execute_cmdline();
+
+        assert!(matches!(app.mode, super::Mode::TagPicker));
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn tag_picker_rows_sorted_alphabetically_with_untagged_first() {
+        let mut app = test_app();
+        app.untagged_count = 2;
+        app.tag_counts = vec![
+            ("polaron".to_string(), 3),
+            ("DFT".to_string(), 5),
+            ("diagmc".to_string(), 7),
+        ];
+
+        assert_eq!(
+            app.tag_picker_rows(),
+            vec![
+                super::TagPickerRow::Untagged { count: 2 },
+                super::TagPickerRow::Tag {
+                    name: "DFT".to_string(),
+                    count: 5,
+                },
+                super::TagPickerRow::Tag {
+                    name: "diagmc".to_string(),
+                    count: 7,
+                },
+                super::TagPickerRow::Tag {
+                    name: "polaron".to_string(),
+                    count: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tag_picker_rows_omits_untagged_when_zero() {
+        let mut app = test_app();
+        app.untagged_count = 0;
+        app.tag_counts = vec![("dft".to_string(), 1)];
+
+        assert_eq!(
+            app.tag_picker_rows(),
+            vec![super::TagPickerRow::Tag {
+                name: "dft".to_string(),
+                count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn tag_picker_apply_sets_exact_tag_filter() {
+        let mut app = test_app();
+        insert_test_equation(&mut app, "Tagged exact", "tagged_exact = 1", &["dft"]);
+        insert_test_equation(
+            &mut app,
+            "Tagged substring",
+            "tagged_substring = 1",
+            &["dft-plus-u"],
+        );
+        app.reload().unwrap();
+        app.apply(Action::OpenTags);
+        let rows = app.tag_picker_rows();
+        app.tag_picker_cursor = rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    super::TagPickerRow::Tag { name, .. } if name == "dft"
+                )
+            })
+            .unwrap();
+
+        app.apply(Action::TagPickerApply);
+
+        assert_eq!(
+            app.browser_filter,
+            super::BrowserFilter::Tag("dft".to_string())
+        );
+        assert!(app.items.iter().any(|item| item.name == "Tagged exact"));
+        assert!(!app.items.iter().any(|item| item.name == "Tagged substring"));
+    }
+
+    #[test]
+    fn tag_picker_apply_untagged_row_sets_untagged_filter() {
+        let mut app = test_app();
+        insert_test_equation(&mut app, "App untagged", "app_untagged = 1", &[]);
+        app.reload().unwrap();
+        app.apply(Action::OpenTags);
+        app.tag_picker_cursor = 0;
+
+        app.apply(Action::TagPickerApply);
+
+        assert_eq!(app.browser_filter, super::BrowserFilter::Untagged);
+        assert!(app.items.iter().any(|item| item.name == "App untagged"));
+        assert_eq!(app.items.len(), app.store.untagged().unwrap().len());
+    }
+
+    #[test]
+    fn tag_picker_cancel_leaves_filter_untouched() {
+        let mut app = test_app();
+        app.browser_filter = super::BrowserFilter::Search("energy".to_string());
+
+        app.apply(Action::OpenTags);
+        app.apply(Action::TagPickerCancel);
+
+        assert_eq!(
+            app.browser_filter,
+            super::BrowserFilter::Search("energy".to_string())
+        );
+        assert!(matches!(app.mode, super::Mode::Browser));
+    }
+
+    #[test]
+    fn browser_title_reflects_tag_and_untagged_filters() {
+        let mut app = test_app();
+
+        app.browser_filter = super::BrowserFilter::Tag("dft".to_string());
+        assert_eq!(app.browser_title(), "Tag: dft");
+
+        app.browser_filter = super::BrowserFilter::Untagged;
+        assert_eq!(app.browser_title(), "Untagged");
     }
 
     #[test]
@@ -2797,6 +3028,12 @@ mod tests {
             }),
         )
         .expect("test app should open")
+    }
+
+    fn insert_test_equation(app: &mut super::AppState, name: &str, latex: &str, tags: &[&str]) {
+        let mut eq = Equation::new(name.to_string(), latex.to_string());
+        eq.tags = tags.iter().map(|tag| tag.to_string()).collect();
+        app.store.insert(&eq).unwrap();
     }
 
     fn test_db_path() -> PathBuf {

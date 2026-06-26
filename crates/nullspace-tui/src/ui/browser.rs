@@ -31,12 +31,13 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let (search_area, list_area) = search_and_list_areas(list_area, app);
 
     app.list_visible_height = list_area.height.saturating_sub(2);
-    let (list, mut state) = widgets::equation_list(
+    let (list, mut state) = widgets::equation_list_with_empty_message(
         &rows,
         (!rows.is_empty()).then_some(app.cursor),
         app.list_scroll_offset,
         app.browser_title(),
         matches!(app.mode, Mode::Search) && app.browser_filter_focus == BrowserFilterFocus::List,
+        "No items",
     );
     frame.render_stateful_widget(list, list_area, &mut state);
     let preview_title = if app.preview_render_px == app.preview_px {
@@ -47,7 +48,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             app.preview_render_px, app.preview_px
         )
     };
-    widgets::preview_pane(frame, preview_area, app, &preview_title);
+    if rows.is_empty() {
+        widgets::message_pane(frame, preview_area, &preview_title, "Nothing selected");
+    } else {
+        widgets::preview_pane(frame, preview_area, app, &preview_title);
+    }
 
     if let Some(search_area) = search_area {
         draw_filter_prompt(frame, search_area, app);
@@ -74,7 +79,9 @@ fn search_and_list_areas(area: Rect, app: &AppState) -> (Option<Rect>, Rect) {
 
     let rows = match &app.browser_filter {
         BrowserFilter::Search(query) => search_box_rows(query, &app.tag_counts),
-        BrowserFilter::None => SEARCH_BOX_BASE_ROWS,
+        BrowserFilter::None | BrowserFilter::Tag(_) | BrowserFilter::Untagged => {
+            SEARCH_BOX_BASE_ROWS
+        }
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -86,7 +93,7 @@ fn search_and_list_areas(area: Rect, app: &AppState) -> (Option<Rect>, Rect) {
 fn draw_filter_prompt(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let (title, label, query) = match &app.browser_filter {
         BrowserFilter::Search(query) => ("Search (tag: var:)", "Query: ", query.as_str()),
-        BrowserFilter::None => return,
+        BrowserFilter::None | BrowserFilter::Tag(_) | BrowserFilter::Untagged => return,
     };
     widgets::search_box(
         frame,

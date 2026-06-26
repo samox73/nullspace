@@ -103,6 +103,16 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Esc | KeyCode::Char('q') => Action::Back,
             _ => Action::None,
         },
+        Mode::TagPicker => match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Action::TagPickerMoveDown,
+            KeyCode::Char('k') | KeyCode::Up => Action::TagPickerMoveUp,
+            KeyCode::Char('g') if app.vim_go_prefix => Action::TagPickerMoveToTop,
+            KeyCode::Char('g') => Action::StartGoPrefix,
+            KeyCode::Char('G') => Action::TagPickerMoveToBottom,
+            KeyCode::Enter => Action::TagPickerApply,
+            KeyCode::Esc | KeyCode::Char('q') => Action::TagPickerCancel,
+            _ => Action::None,
+        },
         Mode::ConfirmPurge(_) => match key.code {
             KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => Action::ConfirmPurgeYes,
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmPurgeNo,

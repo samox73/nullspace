@@ -12,7 +12,7 @@ use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
 use nullspace_core::{EquationSummary, TrashEntry};
 
-use crate::app::{command_matches, AppState};
+use crate::app::{command_matches, AppState, TagPickerRow};
 
 const CMDLINE_WIDTH: u16 = 60;
 const CMDLINE_PROMPT_HEIGHT: u16 = 3;
@@ -43,7 +43,29 @@ pub fn equation_list(
     title: impl Into<Line<'static>>,
     focused: bool,
 ) -> (List<'static>, ListState) {
-    let items = rows
+    equation_list_inner(rows, selected, offset, title, focused, None)
+}
+
+pub fn equation_list_with_empty_message(
+    rows: &[EquationListRow],
+    selected: Option<usize>,
+    offset: usize,
+    title: impl Into<Line<'static>>,
+    focused: bool,
+    empty_message: &'static str,
+) -> (List<'static>, ListState) {
+    equation_list_inner(rows, selected, offset, title, focused, Some(empty_message))
+}
+
+fn equation_list_inner(
+    rows: &[EquationListRow],
+    selected: Option<usize>,
+    offset: usize,
+    title: impl Into<Line<'static>>,
+    focused: bool,
+    empty_message: Option<&'static str>,
+) -> (List<'static>, ListState) {
+    let mut items = rows
         .iter()
         .enumerate()
         .flat_map(|(index, row)| {
@@ -62,8 +84,13 @@ pub fn equation_list(
             std::iter::once(item).chain(spacer)
         })
         .collect::<Vec<_>>();
+    if items.is_empty() {
+        if let Some(message) = empty_message {
+            items.push(ListItem::new(Line::from(message)));
+        }
+    }
     let mut state = ListState::default().with_offset(offset * 2);
-    if !items.is_empty() {
+    if !rows.is_empty() {
         state.select(selected.map(|index| index * 2));
     }
     let list = List::new(items)
@@ -278,6 +305,28 @@ pub fn preview_pane(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, title
     }
 }
 
+pub fn message_pane(frame: &mut Frame<'_>, area: Rect, title: &str, message: &'static str) {
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(message).alignment(Alignment::Center),
+        centered_text_area(inner),
+    );
+}
+
+fn centered_text_area(area: Rect) -> Rect {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(area);
+    rows[1]
+}
+
 fn render_stale_warning(error: &str) -> Paragraph<'_> {
     Paragraph::new(vec![
         Line::styled(
@@ -375,7 +424,11 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
             "Enter, n, c, y, d",
             "Edit, new, clone, copy LaTeX, delete",
         ),
-        ("Browser", "/, :, Esc", "Search, command line, clear filter"),
+        (
+            "Browser",
+            "/, :, Esc",
+            "Search, command line; commands include tags and trash",
+        ),
         (
             "Browser",
             "+/=, -, v, h/l",
@@ -407,6 +460,12 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
             "r, d/Delete, Esc/q",
             "Restore, permanently delete, back",
         ),
+        (
+            "Tags",
+            "j/k, Up/Down, gg, G",
+            "Move selection; jump top/bottom",
+        ),
+        ("Tags", "Enter, Esc/q", "Filter by tag, cancel"),
         (
             "Editor",
             "Tab/Shift-Tab, Ctrl-S, Esc",
@@ -486,6 +545,49 @@ fn trash_list(frame: &mut Frame<'_>, area: Rect, entries: &[TrashEntry], cursor:
         .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .highlight_symbol("> ");
     let mut state = ListState::default().with_selected(Some(cursor.min(entries.len() - 1)));
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+pub fn tag_picker(frame: &mut Frame<'_>, app: &mut AppState) {
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(frame.area());
+    tag_picker_list(frame, outer[0], app);
+    status_bar(frame, outer[1], app);
+}
+
+fn tag_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {
+    app.tag_picker_visible_height = area.height.saturating_sub(2);
+    let rows = app.tag_picker_rows();
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No tags")
+                .alignment(Alignment::Center)
+                .block(Block::default().title("Tags").borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
+
+    let items = rows
+        .iter()
+        .map(|row| match row {
+            TagPickerRow::Untagged { count } => ListItem::new(Line::from(vec![Span::styled(
+                format!("{count:>3} (untagged)"),
+                Style::default().fg(Color::DarkGray),
+            )])),
+            TagPickerRow::Tag { name, count } => {
+                ListItem::new(Line::from(format!("{count:>3} {name}")))
+            }
+        })
+        .collect::<Vec<_>>();
+    let list = List::new(items)
+        .block(Block::default().title("Tags").borders(Borders::ALL))
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    let mut state = ListState::default().with_offset(app.tag_picker_scroll_offset);
+    state.select(Some(app.tag_picker_cursor.min(rows.len() - 1)));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
