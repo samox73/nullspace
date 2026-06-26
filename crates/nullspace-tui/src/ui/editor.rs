@@ -67,7 +67,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 Style::default()
             };
             let title = match index {
-                3 => "References (a add, enter edit, d remove)",
+                3 => "References (a add, enter edit, o open, d remove)",
                 6 => "Related (up/down select, enter open, r edit)",
                 _ => LABELS[index],
             };
@@ -291,10 +291,12 @@ fn render_reference_field(
 ) {
     if references.is_empty() {
         frame.render_widget(
-            Paragraph::new("No references\n\nPress a to add one (title, authors, year, DOI/URL)")
-                .style(Style::default().fg(Color::DarkGray))
-                .block(block)
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(
+                "No references\n\nPress a to add one (title, authors, year, DOI/URL, pages)",
+            )
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block)
+            .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -304,9 +306,16 @@ fn render_reference_field(
         .map(|reference| {
             let citation = nullspace_core::reference::format_citation(reference);
             let link = nullspace_core::reference::reference_link(reference).unwrap_or_default();
+            let detail = match reference.pages.as_deref() {
+                Some(pages) if !pages.trim().is_empty() && !link.is_empty() => {
+                    format!("{link}  pages {pages}")
+                }
+                Some(pages) if !pages.trim().is_empty() => format!("pages {pages}"),
+                _ => link,
+            };
             ListItem::new(vec![
                 Line::from(citation),
-                Line::styled(link, Style::default().fg(Color::DarkGray)),
+                Line::styled(detail, Style::default().fg(Color::DarkGray)),
             ])
         })
         .collect::<Vec<_>>();
@@ -323,7 +332,7 @@ fn draw_reference_editor(frame: &mut Frame<'_>, app: &mut AppState) {
     let Some(editor) = &mut app.editor else {
         return;
     };
-    let area = centered_rect(70, 19, frame.area());
+    let area = centered_rect(70, 22, frame.area());
     frame.render_widget(Clear, area);
     let outer = Block::default().title("Reference").borders(Borders::ALL);
     let inner = outer.inner(area);
@@ -337,11 +346,12 @@ fn draw_reference_editor(frame: &mut Frame<'_>, app: &mut AppState) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
             Constraint::Length(1),
         ])
         .split(inner);
 
-    for index in 0..5 {
+    for index in 0..6 {
         let focused = editor.reference_form.focus == index;
         let style = if focused {
             Style::default()
@@ -370,7 +380,7 @@ fn draw_reference_editor(frame: &mut Frame<'_>, app: &mut AppState) {
             Style::default().fg(Color::DarkGray),
         ),
     };
-    frame.render_widget(Paragraph::new(hint), rows[5]);
+    frame.render_widget(Paragraph::new(hint), rows[6]);
 }
 
 fn draw_remove_reference_confirm(frame: &mut Frame<'_>, app: &AppState, index: usize) {

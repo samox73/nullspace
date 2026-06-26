@@ -426,8 +426,8 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         (
             "Browser",
-            "/, :, Esc",
-            "Search, command line; commands include tags and trash",
+            "/, :, o, Esc",
+            "Search, command line, open reference, clear filter",
         ),
         (
             "Browser",
@@ -474,8 +474,8 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
         ("Editor", "Arrows/Home/End", "Move cursor or list selection"),
         (
             "References field",
-            "a, Enter, j/k, d",
-            "Add, edit, move, remove reference",
+            "a, Enter, o, j/k, d",
+            "Add, edit, open, move, remove reference",
         ),
         (
             "Related field",

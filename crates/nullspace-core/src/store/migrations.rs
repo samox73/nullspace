@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::identity::equation_identity;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS refs (
     title       TEXT NOT NULL DEFAULT '',
     doi         TEXT,
     url         TEXT,
+    pages       TEXT,
     position    INTEGER NOT NULL
 );
 
@@ -74,6 +75,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 5 {
         migrate_v5(&tx)?;
+    }
+    if version < 6 {
+        migrate_v6(&tx)?;
     }
     tx.commit()?;
     Ok(())
@@ -139,10 +143,11 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
                 title       TEXT NOT NULL DEFAULT '',
                 doi         TEXT,
                 url         TEXT,
+                pages       TEXT,
                 position    INTEGER NOT NULL
             );
-            INSERT INTO refs_new (equation_id, authors, year, title, doi, url, position)
-                SELECT equation_id, '', NULL, text, NULL, url, position FROM refs;
+            INSERT INTO refs_new (equation_id, authors, year, title, doi, url, pages, position)
+                SELECT equation_id, '', NULL, text, NULL, url, NULL, position FROM refs;
             DROP TABLE refs;
             ALTER TABLE refs_new RENAME TO refs;
             "#,
@@ -166,6 +171,29 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v6(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "refs")? {
+        conn.execute(
+            "CREATE TABLE refs (
+                equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                authors     TEXT NOT NULL DEFAULT '',
+                year        INTEGER,
+                title       TEXT NOT NULL DEFAULT '',
+                doi         TEXT,
+                url         TEXT,
+                pages       TEXT,
+                position    INTEGER NOT NULL
+            )",
+            [],
+        )?;
+    }
+    if !column_exists(conn, "refs", "pages")? {
+        conn.execute("ALTER TABLE refs ADD COLUMN pages TEXT", [])?;
+    }
+    conn.pragma_update(None, "user_version", 6_i64)?;
+    Ok(())
+}
+
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -175,6 +203,18 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    let found = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+            params![table],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(found)
 }
 
 fn backfill_latex_norm(conn: &Connection) -> Result<()> {

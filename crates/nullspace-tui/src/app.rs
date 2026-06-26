@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use image::RgbaImage;
-use nullspace_core::reference::normalize_doi;
+use nullspace_core::reference::{normalize_doi, normalize_pages, reference_link};
 use nullspace_core::{
     render::validate_latex, Equation, EquationId, EquationSummary, Error, Reference, Store,
     TrashEntry, Variable,
@@ -96,11 +97,11 @@ impl EditorState {
     }
 }
 
-pub const REFERENCE_FIELD_LABELS: [&str; 5] = ["Authors", "Year", "Title", "DOI", "URL"];
+pub const REFERENCE_FIELD_LABELS: [&str; 6] = ["Authors", "Year", "Title", "DOI", "URL", "Page(s)"];
 
 #[derive(Clone)]
 pub struct ReferenceForm {
-    pub fields: [TextArea<'static>; 5],
+    pub fields: [TextArea<'static>; 6],
     pub focus: usize,
     pub editing: Option<usize>,
     pub error: Option<String>,
@@ -123,6 +124,7 @@ impl ReferenceForm {
             reference.title.clone(),
             reference.doi.clone().unwrap_or_default(),
             reference.url.clone().unwrap_or_default(),
+            reference.pages.clone().unwrap_or_default(),
         ];
         Self {
             fields: values.each_ref().map(|value| textarea_from_text(value)),
@@ -708,6 +710,7 @@ impl AppState {
             }
             Action::CopyCurrent => self.copy_current_equation(),
             Action::CopyLatexToClipboard => self.copy_selected_latex_to_clipboard(),
+            Action::OpenReference => self.open_reference(),
             Action::OpenTags => {
                 self.tag_picker_cursor = 0;
                 self.tag_picker_scroll_offset = 0;
@@ -1796,6 +1799,7 @@ impl AppState {
         let title = editor.reference_form.field_text(2).trim().to_string();
         let doi_raw = editor.reference_form.field_text(3).trim().to_string();
         let url_raw = editor.reference_form.field_text(4).trim().to_string();
+        let pages_raw = editor.reference_form.field_text(5).trim().to_string();
 
         if title.is_empty() && authors.is_empty() {
             editor.reference_form.error = Some("Enter at least a title or authors".to_string());
@@ -1822,6 +1826,18 @@ impl AppState {
         } else {
             (None, (!url_raw.is_empty()).then_some(url_raw))
         };
+        let pages = if pages_raw.is_empty() {
+            None
+        } else {
+            match normalize_pages(&pages_raw) {
+                Some(pages) => Some(pages),
+                None => {
+                    editor.reference_form.error =
+                        Some("Pages must look like 1, 5-7, or 2, 5-7".to_string());
+                    return;
+                }
+            }
+        };
 
         let reference = Reference {
             authors,
@@ -1829,6 +1845,7 @@ impl AppState {
             title,
             doi,
             url,
+            pages,
         };
         let editing = editor.reference_form.editing;
         match editing {
@@ -2155,6 +2172,51 @@ impl AppState {
         Ok(())
     }
 
+    fn open_reference(&mut self) -> anyhow::Result<()> {
+        let Some(target) = self.current_reference_target()? else {
+            self.status = "No reference URL for selection".to_string();
+            return Ok(());
+        };
+        open_reference_target(&target)?;
+        self.status = format!("Opened reference: {target}");
+        self.notification = Some(Notification {
+            message: "reference opened".to_string(),
+            created_at: Instant::now(),
+        });
+        Ok(())
+    }
+
+    fn current_reference_target(&mut self) -> anyhow::Result<Option<String>> {
+        if let Some(editor) = self.editor.as_ref() {
+            if editor.focus == 3 {
+                let target = self
+                    .current_reference_index()
+                    .and_then(|index| editor.references.get(index))
+                    .and_then(reference_link);
+                return Ok(target);
+            }
+        }
+
+        if let Some(target) = self
+            .selected
+            .as_ref()
+            .and_then(|equation| equation.references.first())
+            .and_then(reference_link)
+        {
+            return Ok(Some(target));
+        }
+
+        let Some(id) = self.selected_id() else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .get(id)?
+            .references
+            .first()
+            .and_then(reference_link))
+    }
+
     fn persist_editor(&mut self, exit_after_save: bool) -> anyhow::Result<()> {
         let Some(editor) = &self.editor else {
             return Ok(());
@@ -2425,12 +2487,13 @@ fn fields_signature(
         .iter()
         .map(|r| {
             format!(
-                "{}|{}|{}|{}|{}",
+                "{}|{}|{}|{}|{}|{}",
                 r.authors,
                 r.year.map(|y| y.to_string()).unwrap_or_default(),
                 r.title,
                 r.doi.clone().unwrap_or_default(),
                 r.url.clone().unwrap_or_default(),
+                r.pages.clone().unwrap_or_default(),
             )
         })
         .collect::<Vec<_>>()
@@ -2456,6 +2519,61 @@ fn related_picker_items_for(
         .iter()
         .filter(|item| Some(item.id) != editing)
         .collect()
+}
+
+fn open_reference_target(target: &str) -> anyhow::Result<()> {
+    let target = target.trim();
+    if target.is_empty() {
+        anyhow::bail!("Reference URL is empty");
+    }
+    if !is_supported_reference_target(target) {
+        anyhow::bail!("Reference URL must be https or a local file");
+    }
+    let target = expand_home_path(target);
+    platform_open(&target)?;
+    Ok(())
+}
+
+fn is_supported_reference_target(target: &str) -> bool {
+    target.starts_with("https://") || target.starts_with("file://") || !target.contains("://")
+}
+
+fn expand_home_path(target: &str) -> String {
+    if let Some(rest) = target.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut path = std::path::PathBuf::from(home);
+            path.push(rest);
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    target.to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn platform_open(target: &str) -> anyhow::Result<()> {
+    spawn_discarding_output(Command::new("open").arg(target))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn platform_open(target: &str) -> anyhow::Result<()> {
+    spawn_discarding_output(Command::new("cmd").args(["/C", "start", "", target]))?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_open(target: &str) -> anyhow::Result<()> {
+    spawn_discarding_output(Command::new("xdg-open").arg(target))?;
+    Ok(())
+}
+
+fn spawn_discarding_output(command: &mut Command) -> anyhow::Result<()> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
 }
 
 fn fuzzy_matches_item(query: &str, item: &EquationSummary) -> bool {
@@ -2497,7 +2615,15 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     }
 }
 
-const COMMANDS: [&str; 6] = ["delete", "exit", "new", "search", "tags", "trash"];
+const COMMANDS: [&str; 7] = [
+    "delete",
+    "exit",
+    "new",
+    "openReference",
+    "search",
+    "tags",
+    "trash",
+];
 
 pub fn command_matches(prefix: &str) -> Vec<&'static str> {
     COMMANDS
@@ -2528,6 +2654,7 @@ fn command_action(command: &str) -> Option<Action> {
         "delete" => Some(Action::DeleteRequest),
         "exit" => Some(Action::Quit),
         "new" => Some(Action::NewEquation),
+        "openReference" => Some(Action::OpenReference),
         "search" => Some(Action::StartSearch),
         "tags" => Some(Action::OpenTags),
         "trash" => Some(Action::OpenTrash),
@@ -2597,7 +2724,8 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 mod tests {
     use super::{
         command_matches, default_equation_px, effective_render_px, fuzzy_matches_item,
-        textarea_from_text, textarea_lines, textarea_text, CmdlineState,
+        is_supported_reference_target, textarea_from_text, textarea_lines, textarea_text,
+        CmdlineState,
     };
     use crate::action::Action;
     use crate::event::map_key;
@@ -2646,11 +2774,32 @@ mod tests {
     fn command_matching_filters_by_prefix() {
         assert_eq!(
             command_matches(""),
-            ["delete", "exit", "new", "search", "tags", "trash"]
+            [
+                "delete",
+                "exit",
+                "new",
+                "openReference",
+                "search",
+                "tags",
+                "trash"
+            ]
         );
+        assert_eq!(command_matches("o"), ["openReference"]);
         assert_eq!(command_matches("s"), ["search"]);
         assert_eq!(command_matches("t"), ["tags", "trash"]);
         assert_eq!(command_matches("D"), ["delete"]);
+    }
+
+    #[test]
+    fn reference_open_targets_allow_https_and_local_files() {
+        assert!(is_supported_reference_target("https://example.test"));
+        assert!(is_supported_reference_target("/tmp/paper.pdf"));
+        assert!(is_supported_reference_target("paper.pdf"));
+        assert!(is_supported_reference_target("file:///tmp/paper.pdf"));
+        assert!(!is_supported_reference_target("http://example.test"));
+        assert!(!is_supported_reference_target(
+            "ftp://example.test/file.pdf"
+        ));
     }
 
     #[test]

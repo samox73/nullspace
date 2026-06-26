@@ -44,6 +44,8 @@ pub struct Reference {
     pub doi: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub pages: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,5 +118,6 @@ mod reference_compat_tests {
         assert!(r.authors.is_empty());
         assert!(r.year.is_none());
         assert!(r.doi.is_none());
+        assert!(r.pages.is_none());
     }
 }

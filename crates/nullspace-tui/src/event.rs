@@ -32,6 +32,7 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Char('n') => Action::NewEquation,
             KeyCode::Char('c') => Action::CopyCurrent,
             KeyCode::Char('y') => Action::CopyLatexToClipboard,
+            KeyCode::Char('o') => Action::OpenReference,
             KeyCode::Char('d') => Action::DeleteRequest,
             KeyCode::Char('+') | KeyCode::Char('=') => Action::PreviewZoomIn,
             KeyCode::Char('-') => Action::PreviewZoomOut,
@@ -77,6 +78,9 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             }
             KeyCode::Char('G') if app.browser_filter_focus == BrowserFilterFocus::List => {
                 Action::MoveToBottom
+            }
+            KeyCode::Char('o') if app.browser_filter_focus == BrowserFilterFocus::List => {
+                Action::OpenReference
             }
             KeyCode::Backspace
             | KeyCode::Delete
@@ -160,6 +164,11 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
                 KeyCode::Right => Action::EditorMoveRight,
                 KeyCode::Home => Action::EditorHome,
                 KeyCode::End => Action::EditorEnd,
+                KeyCode::Char('o')
+                    if app.editor.as_ref().is_some_and(|editor| editor.focus == 3) =>
+                {
+                    Action::OpenReference
+                }
                 _ => Action::EditorInput(key),
             }
         }

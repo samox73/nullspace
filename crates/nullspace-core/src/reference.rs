@@ -39,6 +39,37 @@ pub fn reference_link(reference: &Reference) -> Option<String> {
     }
 }
 
+/// Normalize valid page specs: "1", "5-7", or comma-separated combinations.
+pub fn normalize_pages(input: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for raw_part in input.split(',') {
+        let part = raw_part.trim();
+        if part.is_empty() {
+            return None;
+        }
+        if let Some((start, end)) = part.split_once('-') {
+            let start = parse_page_number(start)?;
+            let end = parse_page_number(end)?;
+            if start > end {
+                return None;
+            }
+            parts.push(format!("{start}-{end}"));
+        } else {
+            parts.push(parse_page_number(part)?.to_string());
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+fn parse_page_number(input: &str) -> Option<u32> {
+    let input = input.trim();
+    if input.is_empty() || !input.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let page = input.parse::<u32>().ok()?;
+    (page > 0).then_some(page)
+}
+
 /// A single-line human-readable citation for display.
 pub fn format_citation(reference: &Reference) -> String {
     let mut out = String::new();
@@ -80,6 +111,7 @@ mod tests {
             title: "Phys. Rev. 140, A1133".to_string(),
             doi: doi.map(str::to_string),
             url: url.map(str::to_string),
+            pages: Some("1133-1138".to_string()),
         }
     }
 
@@ -109,6 +141,23 @@ mod tests {
             Some("https://doi.org/10.1/X")
         );
         assert_eq!(reference_link(&make(None, None)), None);
+    }
+
+    #[test]
+    fn normalize_pages_accepts_pages_ranges_and_lists() {
+        assert_eq!(normalize_pages("1").as_deref(), Some("1"));
+        assert_eq!(normalize_pages("5-7").as_deref(), Some("5-7"));
+        assert_eq!(normalize_pages("2, 5-7").as_deref(), Some("2, 5-7"));
+        assert_eq!(normalize_pages("2,5 - 7").as_deref(), Some("2, 5-7"));
+    }
+
+    #[test]
+    fn normalize_pages_rejects_malformed_values() {
+        assert_eq!(normalize_pages(""), None);
+        assert_eq!(normalize_pages("0"), None);
+        assert_eq!(normalize_pages("7-5"), None);
+        assert_eq!(normalize_pages("2,,5"), None);
+        assert_eq!(normalize_pages("2, x"), None);
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub enum Action {
     NewEquation,
     CopyCurrent,
     CopyLatexToClipboard,
+    OpenReference,
     DeleteRequest,
     OpenTrash,
     OpenTags,

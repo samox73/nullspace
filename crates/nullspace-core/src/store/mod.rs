@@ -446,7 +446,7 @@ impl Store {
 
     fn load_refs(&self, id: &str) -> Result<Vec<Reference>> {
         let mut stmt = self.conn.prepare(
-            "SELECT authors, year, title, doi, url FROM refs WHERE equation_id=?1 ORDER BY position",
+            "SELECT authors, year, title, doi, url, pages FROM refs WHERE equation_id=?1 ORDER BY position",
         )?;
         let rows = stmt.query_map(params![id], |row| {
             Ok(Reference {
@@ -455,6 +455,7 @@ impl Store {
                 title: row.get(2)?,
                 doi: row.get(3)?,
                 url: row.get(4)?,
+                pages: row.get(5)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -613,8 +614,8 @@ fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
     }
     for (position, reference) in eq.references.iter().enumerate() {
         conn.execute(
-            "INSERT INTO refs (equation_id, authors, year, title, doi, url, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO refs (equation_id, authors, year, title, doi, url, pages, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id,
                 reference.authors,
@@ -622,6 +623,7 @@ fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
                 reference.title,
                 reference.doi,
                 reference.url,
+                reference.pages,
                 position as i64
             ],
         )?;
@@ -724,6 +726,7 @@ mod tests {
             title: "Annalen der Physik".to_string(),
             doi: None,
             url: Some("https://example.test".to_string()),
+            pages: Some("1-4".to_string()),
         }];
         eq
     }
@@ -1436,11 +1439,11 @@ mod tests {
 
         migrations::migrate(&conn).unwrap();
 
-        let (title, url, authors): (String, Option<String>, String) = conn
+        let (title, url, authors, pages): (String, Option<String>, String, Option<String>) = conn
             .query_row(
-                "SELECT title, url, authors FROM refs WHERE equation_id=?1",
+                "SELECT title, url, authors, pages FROM refs WHERE equation_id=?1",
                 params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
         assert_eq!(title, "Kohn & Sham 1965");
@@ -1449,6 +1452,7 @@ mod tests {
             Some("https://doi.org/10.1103/PhysRev.140.A1133")
         );
         assert_eq!(authors, "");
+        assert_eq!(pages, None);
     }
 
     #[test]
@@ -1505,6 +1509,41 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table_count, 1);
-        assert_eq!(user_version, 5);
+        assert_eq!(user_version, 6);
+    }
+
+    #[test]
+    fn migration_v6_adds_ref_pages() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE refs (
+                equation_id TEXT NOT NULL,
+                authors TEXT NOT NULL DEFAULT '', year INTEGER,
+                title TEXT NOT NULL DEFAULT '', doi TEXT, url TEXT,
+                position INTEGER NOT NULL
+            );
+            PRAGMA user_version = 5;
+            "#,
+        )
+        .unwrap();
+
+        migrations::migrate(&conn).unwrap();
+
+        let pages_exists: bool = conn
+            .prepare("PRAGMA table_info(refs)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap()
+            .iter()
+            .any(|column| column == "pages");
+        let user_version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert!(pages_exists);
+        assert_eq!(user_version, 6);
     }
 }
