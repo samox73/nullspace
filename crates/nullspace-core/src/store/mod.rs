@@ -307,6 +307,67 @@ impl Store {
         Ok(())
     }
 
+    pub fn trash(&mut self, id: EquationId) -> Result<()> {
+        let eq = self.get(id)?;
+        let snapshot = serde_json::to_string(&eq)?;
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO trash (id, name, snapshot, deleted_at) VALUES (?1, ?2, ?3, ?4)",
+            params![id.to_string(), eq.name, snapshot, now_rfc3339()],
+        )?;
+        tx.execute("DELETE FROM equations WHERE id=?1", params![id.to_string()])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn restore(&mut self, id: EquationId) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let id_s = id.to_string();
+        let snapshot = tx
+            .query_row(
+                "SELECT snapshot FROM trash WHERE id=?1",
+                params![id_s],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::NotFound(id.to_string()))?;
+        let mut eq: Equation = serde_json::from_str(&snapshot)?;
+        insert_equation_row(&tx, &eq, false)?;
+        // Related edges pointing to equations deleted after this row was trashed
+        // cannot be restored because the target row no longer exists.
+        eq.related = existing_equation_ids(&tx, &eq.related)?;
+        insert_children(&tx, &eq)?;
+        tx.execute("DELETE FROM trash WHERE id=?1", params![id.to_string()])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn purge(&mut self, id: EquationId) -> Result<()> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM trash WHERE id=?1", params![id.to_string()])?;
+        if changed == 0 {
+            return Err(Error::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn list_trash(&self) -> Result<Vec<TrashEntry>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, deleted_at FROM trash ORDER BY deleted_at DESC")?;
+        let rows = stmt.query_map([], |row| {
+            let raw_id: String = row.get(0)?;
+            Ok(TrashEntry {
+                id: parse_id_col(&raw_id)?,
+                name: row.get(1)?,
+                deleted_at: row.get(2)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     pub fn child_count_for_tests(&self, id: EquationId) -> Result<i64> {
         let id_s = id.to_string();
         let vars: i64 = self.conn.query_row(
@@ -480,6 +541,24 @@ fn load_existing_by_norm(conn: &Connection) -> Result<HashMap<String, EquationId
     })?;
     rows.collect::<std::result::Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
+}
+
+fn existing_equation_ids(conn: &Connection, ids: &[EquationId]) -> Result<Vec<EquationId>> {
+    let mut existing = Vec::new();
+    for id in ids {
+        let found = conn
+            .query_row(
+                "SELECT 1 FROM equations WHERE id=?1",
+                params![id.to_string()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if found {
+            existing.push(*id);
+        }
+    }
+    Ok(existing)
 }
 
 fn duplicate_or_db(err: rusqlite::Error, latex: &str) -> Error {
@@ -847,6 +926,96 @@ mod tests {
     }
 
     #[test]
+    fn trash_then_list_trash_roundtrips() {
+        let mut store = Store::open_in_memory().unwrap();
+        let eq = full_equation("Energy");
+        let id = eq.id;
+        store.insert(&eq).unwrap();
+
+        store.trash(id).unwrap();
+
+        assert!(store.all().unwrap().is_empty());
+        let trash = store.list_trash().unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].id, id);
+        assert_eq!(trash[0].name, "Energy");
+        assert!(!trash[0].deleted_at.is_empty());
+    }
+
+    #[test]
+    fn restore_brings_back_equation_with_children() {
+        let mut store = Store::open_in_memory().unwrap();
+        let eq = full_equation("Energy");
+        let id = eq.id;
+        store.insert(&eq).unwrap();
+
+        store.trash(id).unwrap();
+        store.restore(id).unwrap();
+
+        let got = store.get(id).unwrap();
+        assert_eq!(got.name, eq.name);
+        assert_eq!(got.description, eq.description);
+        assert_eq!(got.latex, eq.latex);
+        assert_eq!(got.variables, eq.variables);
+        assert_eq!(got.tags, eq.tags);
+        assert_eq!(got.references, eq.references);
+        assert!(store.list_trash().unwrap().is_empty());
+    }
+
+    #[test]
+    fn restore_conflict_is_duplicate_error() {
+        let mut store = Store::open_in_memory().unwrap();
+        let eq = Equation::new("Energy".to_string(), "E=mc^2".to_string());
+        let id = eq.id;
+        store.insert(&eq).unwrap();
+        store.trash(id).unwrap();
+        store
+            .insert(&Equation::new(
+                "Replacement".to_string(),
+                "E = mc^2".to_string(),
+            ))
+            .unwrap();
+
+        let err = store.restore(id).unwrap_err();
+
+        assert!(matches!(err, Error::Duplicate(_)));
+        assert_eq!(store.list_trash().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_drops_dangling_related_edges() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut a = Equation::new("A".to_string(), "a".to_string());
+        let b = Equation::new("B".to_string(), "b".to_string());
+        let a_id = a.id;
+        let b_id = b.id;
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+        a.related.push(b_id);
+        store.update(&a).unwrap();
+
+        store.trash(a_id).unwrap();
+        store.delete(b_id).unwrap();
+        store.restore(a_id).unwrap();
+
+        assert!(store.get(a_id).unwrap().related.is_empty());
+    }
+
+    #[test]
+    fn purge_removes_trash_row() {
+        let mut store = Store::open_in_memory().unwrap();
+        let eq = full_equation("Energy");
+        let id = eq.id;
+        store.insert(&eq).unwrap();
+        store.trash(id).unwrap();
+
+        store.purge(id).unwrap();
+
+        assert!(store.list_trash().unwrap().is_empty());
+        assert!(matches!(store.restore(id), Err(Error::NotFound(_))));
+    }
+
+    #[test]
     fn related_is_bidirectional() {
         let mut store = Store::open_in_memory().unwrap();
         let mut a = Equation::new("A".to_string(), "a".to_string());
@@ -1172,5 +1341,62 @@ mod tests {
             Some("https://doi.org/10.1103/PhysRev.140.A1133")
         );
         assert_eq!(authors, "");
+    }
+
+    #[test]
+    fn migration_v5_creates_trash_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE equations (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                latex TEXT NOT NULL, latex_norm TEXT NOT NULL DEFAULT '',
+                px_height INTEGER NOT NULL DEFAULT 48,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                allow_duplicate_latex INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE variables (
+                equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                symbol TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL,
+                PRIMARY KEY (equation_id, symbol)
+            );
+            CREATE TABLE tags (
+                equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY (equation_id, tag)
+            );
+            CREATE TABLE refs (
+                equation_id TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                authors TEXT NOT NULL DEFAULT '', year INTEGER,
+                title TEXT NOT NULL DEFAULT '', doi TEXT, url TEXT,
+                position INTEGER NOT NULL
+            );
+            CREATE TABLE related (
+                a TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                b TEXT NOT NULL REFERENCES equations(id) ON DELETE CASCADE,
+                PRIMARY KEY (a, b),
+                CHECK (a < b)
+            );
+            PRAGMA user_version = 4;
+            "#,
+        )
+        .unwrap();
+
+        migrations::migrate(&conn).unwrap();
+
+        let table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='trash'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let user_version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(table_count, 1);
+        assert_eq!(user_version, 5);
     }
 }

@@ -1,6 +1,5 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
@@ -61,14 +60,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             .map(|item| item.name.as_str())
             .unwrap_or("selected equation");
         let prompt = format!("Delete \"{name}\"? (y/d/enter to confirm, n/esc to cancel)");
-        let area = confirm_rect(&prompt, frame.area());
-        frame.render_widget(Clear, area);
-        frame.render_widget(
-            Paragraph::new(prompt)
-                .block(Block::default().title("Confirm").borders(Borders::ALL))
-                .wrap(Wrap { trim: false }),
-            area,
-        );
+        widgets::confirm_overlay(frame, "Confirm", prompt);
     }
 
     widgets::status_bar(frame, outer[1], app);
@@ -103,82 +95,4 @@ fn draw_filter_prompt(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             focused: app.browser_filter_focus == BrowserFilterFocus::Search,
         },
     );
-}
-
-fn confirm_rect(message: &str, area: Rect) -> Rect {
-    if area.width == 0 || area.height == 0 {
-        return area;
-    }
-
-    let max_width = area.width.min(72);
-    let min_width = area.width.min(32);
-    let desired_width = message
-        .chars()
-        .count()
-        .saturating_add(4)
-        .min(u16::MAX as usize) as u16;
-    let width = desired_width.clamp(min_width, max_width);
-    let inner_width = width.saturating_sub(2).max(1) as usize;
-    let body_lines = wrapped_line_count(message, inner_width);
-    let height = body_lines.saturating_add(2).max(5).min(area.height);
-
-    centered_rect(width, height, area)
-}
-
-fn wrapped_line_count(message: &str, width: usize) -> u16 {
-    message
-        .lines()
-        .map(|line| wrapped_line_count_for_line(line, width.max(1)))
-        .sum::<usize>()
-        .max(1)
-        .min(u16::MAX as usize) as u16
-}
-
-fn wrapped_line_count_for_line(line: &str, width: usize) -> usize {
-    let mut words = line.split_whitespace().peekable();
-    if words.peek().is_none() {
-        return 1;
-    }
-
-    let mut lines = 1;
-    let mut current_width = 0;
-    for word in words {
-        let word_width = word.chars().count();
-        if current_width == 0 {
-            lines += word_width.saturating_sub(1) / width;
-            current_width = word_width % width;
-            if current_width == 0 {
-                current_width = width;
-            }
-        } else if current_width + 1 + word_width <= width {
-            current_width += 1 + word_width;
-        } else {
-            lines += 1 + word_width.saturating_sub(1) / width;
-            current_width = word_width % width;
-            if current_width == 0 {
-                current_width = width;
-            }
-        }
-    }
-    lines
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(height.min(area.height)),
-            Constraint::Min(0),
-        ])
-        .split(area);
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(width.min(area.width)),
-            Constraint::Min(0),
-        ])
-        .split(vertical[1]);
-    horizontal[1]
 }

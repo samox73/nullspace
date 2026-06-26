@@ -8,7 +8,7 @@ use ratatui::{
 };
 use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
-use nullspace_core::EquationSummary;
+use nullspace_core::{EquationSummary, TrashEntry};
 
 use crate::app::{command_matches, AppState, Mode};
 
@@ -313,10 +313,12 @@ pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         }
         Mode::Cmdline => "type command  tab/-> accept  enter run  esc cancel",
         Mode::Search => "tab focus  j/k move list  enter apply  esc clear",
+        Mode::Trash => "r restore  d delete  esc back",
         Mode::Editor => "tab field  esc back",
         Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
         Mode::ReferenceEditor => "tab/shift-tab field  enter save  esc cancel",
         Mode::ConfirmDelete(_) => "y/d/enter confirm  n/esc cancel",
+        Mode::ConfirmPurge(_) => "y/d/enter permanently delete  n/esc cancel",
         Mode::ConfirmRemoveRelated(_) => "y remove relation  n/esc cancel",
         Mode::ConfirmRemoveReference(_) => "y/enter remove  n/esc cancel",
     };
@@ -332,6 +334,63 @@ pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Span::styled(graphics, Style::default().fg(Color::Yellow)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+pub fn trash(frame: &mut Frame<'_>, app: &AppState) {
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(frame.area());
+    trash_list(frame, outer[0], &app.trash_items, app.trash_cursor);
+    status_bar(frame, outer[1], app);
+}
+
+fn trash_list(frame: &mut Frame<'_>, area: Rect, entries: &[TrashEntry], cursor: usize) {
+    if entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Trash is empty")
+                .alignment(Alignment::Center)
+                .block(Block::default().title("Trash").borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
+
+    let items = entries
+        .iter()
+        .map(|entry| {
+            ListItem::new(vec![
+                Line::from(Span::styled(
+                    entry.name.clone(),
+                    Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                )),
+                Line::from(vec![
+                    Span::raw("  deleted "),
+                    Span::styled(
+                        entry.deleted_at.clone(),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let list = List::new(items)
+        .block(Block::default().title("Trash").borders(Borders::ALL))
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    let mut state = ListState::default().with_selected(Some(cursor.min(entries.len() - 1)));
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+pub fn confirm_overlay(frame: &mut Frame<'_>, title: &str, prompt: String) {
+    let area = confirm_rect(&prompt, frame.area());
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(prompt)
+            .block(Block::default().title(title).borders(Borders::ALL))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 pub fn notification(frame: &mut Frame<'_>, app: &AppState) {
@@ -405,4 +464,82 @@ fn cmdline_list_area(area: Rect, height: u16) -> Rect {
         area,
         CMDLINE_TOP_OFFSET.saturating_add(CMDLINE_PROMPT_HEIGHT),
     )
+}
+
+fn confirm_rect(message: &str, area: Rect) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return area;
+    }
+
+    let max_width = area.width.min(72);
+    let min_width = area.width.min(32);
+    let desired_width = message
+        .chars()
+        .count()
+        .saturating_add(4)
+        .min(u16::MAX as usize) as u16;
+    let width = desired_width.clamp(min_width, max_width);
+    let inner_width = width.saturating_sub(2).max(1) as usize;
+    let body_lines = wrapped_line_count(message, inner_width);
+    let height = body_lines.saturating_add(2).max(5).min(area.height);
+
+    centered_rect(width, height, area)
+}
+
+fn wrapped_line_count(message: &str, width: usize) -> u16 {
+    message
+        .lines()
+        .map(|line| wrapped_line_count_for_line(line, width.max(1)))
+        .sum::<usize>()
+        .max(1)
+        .min(u16::MAX as usize) as u16
+}
+
+fn wrapped_line_count_for_line(line: &str, width: usize) -> usize {
+    let mut words = line.split_whitespace().peekable();
+    if words.peek().is_none() {
+        return 1;
+    }
+
+    let mut lines = 1;
+    let mut current_width = 0;
+    for word in words {
+        let word_width = word.chars().count();
+        if current_width == 0 {
+            lines += word_width.saturating_sub(1) / width;
+            current_width = word_width % width;
+            if current_width == 0 {
+                current_width = width;
+            }
+        } else if current_width + 1 + word_width <= width {
+            current_width += 1 + word_width;
+        } else {
+            lines += 1 + word_width.saturating_sub(1) / width;
+            current_width = word_width % width;
+            if current_width == 0 {
+                current_width = width;
+            }
+        }
+    }
+    lines
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(height.min(area.height)),
+            Constraint::Min(0),
+        ])
+        .split(area);
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(width.min(area.width)),
+            Constraint::Min(0),
+        ])
+        .split(vertical[1]);
+    horizontal[1]
 }

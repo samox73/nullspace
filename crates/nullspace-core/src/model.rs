@@ -71,6 +71,13 @@ pub struct EquationSummary {
     pub px_height: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct TrashEntry {
+    pub id: EquationId,
+    pub name: String,
+    pub deleted_at: String,
+}
+
 impl Equation {
     pub fn new(name: String, latex: String) -> Self {
         let now = crate::store::now_rfc3339();

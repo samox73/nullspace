@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS related (
     PRIMARY KEY (a, b),
     CHECK (a < b)
 );
+
+CREATE TABLE IF NOT EXISTS trash (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    snapshot    TEXT NOT NULL,
+    deleted_at  TEXT NOT NULL
+);
 "#;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
@@ -64,6 +71,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 4 {
         migrate_v4(&tx)?;
+    }
+    if version < 5 {
+        migrate_v5(&tx)?;
     }
     tx.commit()?;
     Ok(())
@@ -139,6 +149,20 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
         )?;
     }
     conn.pragma_update(None, "user_version", 4_i64)?;
+    Ok(())
+}
+
+fn migrate_v5(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS trash (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            snapshot    TEXT NOT NULL,
+            deleted_at  TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.pragma_update(None, "user_version", 5_i64)?;
     Ok(())
 }
 

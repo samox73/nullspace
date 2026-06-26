@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use nullspace_core::reference::normalize_doi;
 use nullspace_core::{
-    render::validate_latex, Equation, EquationId, EquationSummary, Reference, Store, Variable,
+    render::validate_latex, Equation, EquationId, EquationSummary, Error, Reference, Store,
+    TrashEntry, Variable,
 };
 use ratatui::layout::Size;
 use ratatui_image::protocol::StatefulProtocol;
@@ -45,7 +46,9 @@ pub enum Mode {
     Editor,
     RelatedPicker,
     ReferenceEditor,
+    Trash,
     ConfirmDelete(EquationId),
+    ConfirmPurge(EquationId),
     ConfirmRemoveRelated(EquationId),
     ConfirmRemoveReference(usize),
 }
@@ -174,6 +177,8 @@ pub struct AppState {
     pub mode: Mode,
     pub all_items: Vec<EquationSummary>,
     pub items: Vec<EquationSummary>,
+    pub trash_items: Vec<TrashEntry>,
+    pub trash_cursor: usize,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
     pub browser_filter_focus: BrowserFilterFocus,
@@ -244,6 +249,8 @@ impl AppState {
             mode: Mode::Browser,
             all_items: Vec::new(),
             items: Vec::new(),
+            trash_items: Vec::new(),
+            trash_cursor: 0,
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
             browser_filter_focus: BrowserFilterFocus::Search,
@@ -310,6 +317,10 @@ impl AppState {
 
     pub fn selected_id(&self) -> Option<EquationId> {
         self.items.get(self.cursor).map(|item| item.id)
+    }
+
+    pub fn selected_trash_id(&self) -> Option<EquationId> {
+        self.trash_items.get(self.trash_cursor).map(|item| item.id)
     }
 
     pub fn browser_title(&self) -> String {
@@ -408,6 +419,14 @@ impl AppState {
         self.refresh_items()?;
         self.status = "Filter cleared".to_string();
         self.schedule_selected();
+        Ok(())
+    }
+
+    fn reload_trash(&mut self) -> anyhow::Result<()> {
+        self.trash_items = self.store.list_trash()?;
+        self.trash_cursor = self
+            .trash_cursor
+            .min(self.trash_items.len().saturating_sub(1));
         Ok(())
     }
 
@@ -597,6 +616,45 @@ impl AppState {
             }
             Action::CopyCurrent => self.copy_current_equation(),
             Action::CopyLatexToClipboard => self.copy_selected_latex_to_clipboard(),
+            Action::OpenTrash => {
+                self.reload_trash()?;
+                self.trash_cursor = 0;
+                self.mode = Mode::Trash;
+                self.status = format!("Trash: {} item(s)", self.trash_items.len());
+                Ok(())
+            }
+            Action::TrashMoveUp => {
+                self.trash_cursor = self.trash_cursor.saturating_sub(1);
+                Ok(())
+            }
+            Action::TrashMoveDown => {
+                let max = self.trash_items.len().saturating_sub(1);
+                self.trash_cursor = (self.trash_cursor + 1).min(max);
+                Ok(())
+            }
+            Action::TrashRestore => {
+                if let Some(id) = self.selected_trash_id() {
+                    match self.store.restore(id) {
+                        Ok(()) => {
+                            self.reload()?;
+                            self.reload_trash()?;
+                            self.status = "Restored".to_string();
+                            self.schedule_selected();
+                        }
+                        Err(Error::Duplicate(_)) => {
+                            self.status = "Can't restore: conflicting equation exists".to_string();
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+                Ok(())
+            }
+            Action::TrashPurgeRequest => {
+                if let Some(id) = self.selected_trash_id() {
+                    self.mode = Mode::ConfirmPurge(id);
+                }
+                Ok(())
+            }
             Action::DeleteRequest => {
                 if let Some(id) = self.selected_id() {
                     self.mode = Mode::ConfirmDelete(id);
@@ -662,16 +720,33 @@ impl AppState {
             }
             Action::ConfirmYes => {
                 if let Mode::ConfirmDelete(id) = self.mode {
-                    self.store.delete(id)?;
+                    self.store.trash(id)?;
                     self.reload()?;
                     self.mode = Mode::Browser;
-                    self.status = "Deleted".to_string();
+                    self.status = "Moved to trash".to_string();
                     self.schedule_selected();
                 }
                 Ok(())
             }
             Action::ConfirmNo => {
                 self.mode = Mode::Browser;
+                Ok(())
+            }
+            Action::ConfirmPurgeYes => {
+                if let Mode::ConfirmPurge(id) = self.mode {
+                    self.store.purge(id)?;
+                    self.reload_trash()?;
+                    self.mode = if self.trash_items.is_empty() {
+                        Mode::Browser
+                    } else {
+                        Mode::Trash
+                    };
+                    self.status = "Permanently deleted".to_string();
+                }
+                Ok(())
+            }
+            Action::ConfirmPurgeNo => {
+                self.mode = Mode::Trash;
                 Ok(())
             }
             Action::ConfirmRelatedRemoveYes => {
@@ -714,6 +789,7 @@ impl AppState {
             Action::Back => {
                 self.mode = match self.mode {
                     Mode::ConfirmDelete(_) => Mode::Browser,
+                    Mode::ConfirmPurge(_) => Mode::Trash,
                     Mode::ConfirmRemoveRelated(_) => Mode::Editor,
                     Mode::ConfirmRemoveReference(_) => Mode::Editor,
                     Mode::ReferenceEditor => Mode::Editor,
@@ -733,6 +809,7 @@ impl AppState {
                         }
                     }
                     Mode::Search | Mode::Cmdline | Mode::Browser => Mode::Browser,
+                    Mode::Trash => Mode::Browser,
                 };
                 self.schedule_selected();
                 Ok(())
@@ -2275,7 +2352,7 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     }
 }
 
-const COMMANDS: [&str; 4] = ["delete", "exit", "new", "search"];
+const COMMANDS: [&str; 5] = ["delete", "exit", "new", "search", "trash"];
 
 pub fn command_matches(prefix: &str) -> Vec<&'static str> {
     COMMANDS
@@ -2307,6 +2384,7 @@ fn command_action(command: &str) -> Option<Action> {
         "exit" => Some(Action::Quit),
         "new" => Some(Action::NewEquation),
         "search" => Some(Action::StartSearch),
+        "trash" => Some(Action::OpenTrash),
         _ => None,
     }
 }
@@ -2417,8 +2495,12 @@ mod tests {
 
     #[test]
     fn command_matching_filters_by_prefix() {
-        assert_eq!(command_matches(""), ["delete", "exit", "new", "search"]);
+        assert_eq!(
+            command_matches(""),
+            ["delete", "exit", "new", "search", "trash"]
+        );
         assert_eq!(command_matches("s"), ["search"]);
+        assert_eq!(command_matches("t"), ["trash"]);
         assert_eq!(command_matches("D"), ["delete"]);
     }
 
@@ -2490,6 +2572,16 @@ mod tests {
         app.execute_cmdline();
 
         assert!(matches!(app.mode, super::Mode::Search));
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn execute_cmdline_trash_opens_trash() {
+        let mut app = test_app_with_cmdline("trash");
+
+        app.execute_cmdline();
+
+        assert!(matches!(app.mode, super::Mode::Trash));
         assert!(app.cmdline.is_none());
     }
 

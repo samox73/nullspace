@@ -69,6 +69,19 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmNo,
             _ => Action::None,
         },
+        Mode::Trash => match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Action::TrashMoveDown,
+            KeyCode::Char('k') | KeyCode::Up => Action::TrashMoveUp,
+            KeyCode::Char('r') => Action::TrashRestore,
+            KeyCode::Char('d') | KeyCode::Delete => Action::TrashPurgeRequest,
+            KeyCode::Esc | KeyCode::Char('q') => Action::Back,
+            _ => Action::None,
+        },
+        Mode::ConfirmPurge(_) => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => Action::ConfirmPurgeYes,
+            KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmPurgeNo,
+            _ => Action::None,
+        },
         Mode::ConfirmRemoveRelated(_) => match key.code {
             KeyCode::Char('y') => Action::ConfirmRelatedRemoveYes,
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmRelatedRemoveNo,

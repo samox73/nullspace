@@ -16,6 +16,25 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             widgets::clear_cmdline_overlay(frame, cmdline_area);
             browser::draw(frame, app);
         }
+        Mode::Trash | Mode::ConfirmPurge(_) => {
+            widgets::clear_cmdline_overlay(frame, cmdline_area);
+            widgets::trash(frame, app);
+            if let Mode::ConfirmPurge(id) = app.mode {
+                let name = app
+                    .trash_items
+                    .iter()
+                    .find(|item| item.id == id)
+                    .map(|item| item.name.as_str())
+                    .unwrap_or("selected equation");
+                widgets::confirm_overlay(
+                    frame,
+                    "Confirm",
+                    format!(
+                        "Permanently delete \"{name}\"? (y/d/enter to confirm, n/esc to cancel)"
+                    ),
+                );
+            }
+        }
         Mode::Cmdline => {
             browser::draw(frame, app);
             widgets::cmdline(frame, cmdline_area, app);
