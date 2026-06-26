@@ -47,7 +47,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         | Mode::RelatedPicker
         | Mode::ConfirmRemoveRelated(_)
         | Mode::ReferenceEditor
-        | Mode::ConfirmRemoveReference(_) => {
+        | Mode::ConfirmRemoveReference(_)
+        | Mode::VariableEditor
+        | Mode::ConfirmRemoveVariable(_) => {
             widgets::clear_cmdline_overlay(frame, cmdline_area);
             editor::draw(frame, app);
         }

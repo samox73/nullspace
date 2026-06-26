@@ -47,12 +47,14 @@ pub enum Mode {
     Editor,
     RelatedPicker,
     ReferenceEditor,
+    VariableEditor,
     Trash,
     TagPicker,
     ConfirmDelete(EquationId),
     ConfirmPurge(EquationId),
     ConfirmRemoveRelated(EquationId),
     ConfirmRemoveReference(usize),
+    ConfirmRemoveVariable(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,8 +76,11 @@ pub struct EditorState {
     pub focus: usize,
     pub related_cursor: usize,
     pub reference_cursor: usize,
+    pub variable_cursor: usize,
     pub references: Vec<Reference>,
+    pub variables: Vec<Variable>,
     pub reference_form: ReferenceForm,
+    pub variable_form: VariableForm,
     pub dirty: bool,
     pub last_change: Instant,
     pub last_saved_signature: String,
@@ -98,6 +103,7 @@ impl EditorState {
 }
 
 pub const REFERENCE_FIELD_LABELS: [&str; 6] = ["Authors", "Year", "Title", "DOI", "URL", "Page(s)"];
+pub const VARIABLE_FIELD_LABELS: [&str; 2] = ["Symbol", "Description"];
 
 #[derive(Clone)]
 pub struct ReferenceForm {
@@ -105,6 +111,39 @@ pub struct ReferenceForm {
     pub focus: usize,
     pub editing: Option<usize>,
     pub error: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct VariableForm {
+    pub fields: [TextArea<'static>; 2],
+    pub focus: usize,
+    pub editing: Option<usize>,
+    pub error: Option<String>,
+}
+
+impl VariableForm {
+    fn empty() -> Self {
+        Self {
+            fields: std::array::from_fn(|_| textarea_from_text("")),
+            focus: 0,
+            editing: None,
+            error: None,
+        }
+    }
+
+    fn from_variable(variable: &Variable, index: usize) -> Self {
+        let values = [variable.symbol.clone(), variable.description.clone()];
+        Self {
+            fields: values.each_ref().map(|value| textarea_from_text(value)),
+            focus: 0,
+            editing: Some(index),
+            error: None,
+        }
+    }
+
+    fn field_text(&self, index: usize) -> String {
+        textarea_text(&self.fields[index])
+    }
 }
 
 impl ReferenceForm {
@@ -918,6 +957,17 @@ impl AppState {
                 self.mode = Mode::Editor;
                 Ok(())
             }
+            Action::ConfirmVariableRemoveYes => {
+                if let Mode::ConfirmRemoveVariable(index) = self.mode {
+                    self.remove_variable(index);
+                    self.mode = Mode::Editor;
+                }
+                Ok(())
+            }
+            Action::ConfirmVariableRemoveNo => {
+                self.mode = Mode::Editor;
+                Ok(())
+            }
             Action::OpenCurrent => {
                 if let Some(id) = self.selected_id() {
                     self.editor_history.clear();
@@ -939,7 +989,9 @@ impl AppState {
                     Mode::ConfirmPurge(_) => Mode::Trash,
                     Mode::ConfirmRemoveRelated(_) => Mode::Editor,
                     Mode::ConfirmRemoveReference(_) => Mode::Editor,
+                    Mode::ConfirmRemoveVariable(_) => Mode::Editor,
                     Mode::ReferenceEditor => Mode::Editor,
+                    Mode::VariableEditor => Mode::Editor,
                     Mode::Editor | Mode::RelatedPicker => {
                         if matches!(self.mode, Mode::Editor)
                             && self.editor.as_ref().is_some_and(|editor| editor.dirty)
@@ -979,7 +1031,7 @@ impl AppState {
             }
             Action::EditorMoveLeft => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 && editor.focus != 3 {
+                    if !is_list_field(editor.focus) {
                         editor.fields[editor.focus].move_cursor(CursorMove::Back);
                     }
                 }
@@ -987,7 +1039,7 @@ impl AppState {
             }
             Action::EditorMoveRight => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 && editor.focus != 3 {
+                    if !is_list_field(editor.focus) {
                         editor.fields[editor.focus].move_cursor(CursorMove::Forward);
                     }
                 }
@@ -995,7 +1047,7 @@ impl AppState {
             }
             Action::EditorHome => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 && editor.focus != 3 {
+                    if !is_list_field(editor.focus) {
                         editor.fields[editor.focus].move_cursor(CursorMove::Head);
                     }
                 }
@@ -1003,7 +1055,7 @@ impl AppState {
             }
             Action::EditorEnd => {
                 if let Some(editor) = &mut self.editor {
-                    if editor.focus != 6 && editor.focus != 3 {
+                    if !is_list_field(editor.focus) {
                         editor.fields[editor.focus].move_cursor(CursorMove::End);
                     }
                 }
@@ -1014,6 +1066,7 @@ impl AppState {
                     match editor.focus {
                         6 => editor.related_cursor = editor.related_cursor.saturating_sub(1),
                         3 => editor.reference_cursor = editor.reference_cursor.saturating_sub(1),
+                        5 => editor.variable_cursor = editor.variable_cursor.saturating_sub(1),
                         focus => editor.fields[focus].move_cursor(CursorMove::Up),
                     }
                 }
@@ -1029,6 +1082,10 @@ impl AppState {
                         3 => {
                             let max = editor.references.len().saturating_sub(1);
                             editor.reference_cursor = (editor.reference_cursor + 1).min(max);
+                        }
+                        5 => {
+                            let max = editor.variables.len().saturating_sub(1);
+                            editor.variable_cursor = (editor.variable_cursor + 1).min(max);
                         }
                         focus => editor.fields[focus].move_cursor(CursorMove::Down),
                     }
@@ -1087,6 +1144,26 @@ impl AppState {
             }
             Action::ReferenceEditorInput(key) => {
                 self.input_reference_form(key);
+                Ok(())
+            }
+            Action::VariableEditorNextField => {
+                self.variable_form_next_field();
+                Ok(())
+            }
+            Action::VariableEditorPrevField => {
+                self.variable_form_prev_field();
+                Ok(())
+            }
+            Action::VariableEditorSave => {
+                self.save_variable_form();
+                Ok(())
+            }
+            Action::VariableEditorCancel => {
+                self.mode = Mode::Editor;
+                Ok(())
+            }
+            Action::VariableEditorInput(key) => {
+                self.input_variable_form(key);
                 Ok(())
             }
             Action::None => Ok(()),
@@ -1337,6 +1414,8 @@ impl AppState {
                 | Mode::ConfirmRemoveRelated(_)
                 | Mode::ReferenceEditor
                 | Mode::ConfirmRemoveReference(_)
+                | Mode::VariableEditor
+                | Mode::ConfirmRemoveVariable(_)
         );
         let latex = if in_editor {
             self.editor
@@ -1390,6 +1469,8 @@ impl AppState {
                 | Mode::ConfirmRemoveRelated(_)
                 | Mode::ReferenceEditor
                 | Mode::ConfirmRemoveReference(_)
+                | Mode::VariableEditor
+                | Mode::ConfirmRemoveVariable(_)
         );
         self.generation = self.generation.saturating_add(1);
         self.last_change = Instant::now();
@@ -1590,6 +1671,10 @@ impl AppState {
             .as_ref()
             .map(|eq| eq.references.clone())
             .unwrap_or_default();
+        let initial_variables = equation
+            .as_ref()
+            .map(|eq| eq.variables.clone())
+            .unwrap_or_default();
         let field_values = if let Some(eq) = equation {
             [
                 eq.name,
@@ -1597,7 +1682,7 @@ impl AppState {
                 eq.latex,
                 String::new(),
                 eq.tags.join(", "),
-                format_variables(&eq.variables),
+                format_variables(&initial_variables),
                 format_related(&initial_related, &self.all_items),
             ]
         } else {
@@ -1620,13 +1705,17 @@ impl AppState {
                 &field_values,
                 &initial_related,
                 &initial_references,
+                &initial_variables,
             ),
             fields,
             focus: 0,
             related_cursor: 0,
             reference_cursor: 0,
+            variable_cursor: 0,
             references: initial_references,
+            variables: initial_variables,
             reference_form: ReferenceForm::empty(),
+            variable_form: VariableForm::empty(),
             dirty: false,
             last_change: Instant::now(),
             related_picker: RelatedPickerState {
@@ -1659,6 +1748,10 @@ impl AppState {
                 self.open_reference_form(None);
                 return;
             }
+            KeyCode::Char('a') if focused == 5 => {
+                self.open_variable_form(None);
+                return;
+            }
             KeyCode::Char('k') if focused == 3 => {
                 editor.reference_cursor = editor.reference_cursor.saturating_sub(1);
                 return;
@@ -1671,6 +1764,21 @@ impl AppState {
             KeyCode::Char('d') if focused == 3 => {
                 if let Some(idx) = self.current_reference_index() {
                     self.mode = Mode::ConfirmRemoveReference(idx);
+                }
+                return;
+            }
+            KeyCode::Char('k') if focused == 5 => {
+                editor.variable_cursor = editor.variable_cursor.saturating_sub(1);
+                return;
+            }
+            KeyCode::Char('j') if focused == 5 => {
+                let max = editor.variables.len().saturating_sub(1);
+                editor.variable_cursor = (editor.variable_cursor + 1).min(max);
+                return;
+            }
+            KeyCode::Char('d') if focused == 5 => {
+                if let Some(idx) = self.current_variable_index() {
+                    self.mode = Mode::ConfirmRemoveVariable(idx);
                 }
                 return;
             }
@@ -1696,11 +1804,17 @@ impl AppState {
                 }
                 return;
             }
+            KeyCode::Enter if focused == 5 => {
+                if let Some(idx) = self.current_variable_index() {
+                    self.open_variable_form(Some(idx));
+                }
+                return;
+            }
             KeyCode::Enter if focused == 6 => {
                 self.open_selected_related_detail();
                 return;
             }
-            _ if focused != 6 && focused != 3 && editor.fields[focused].input(key) => {}
+            _ if !is_list_field(focused) && editor.fields[focused].input(key) => {}
             _ => return,
         }
         mark_editor_dirty(editor);
@@ -1867,6 +1981,109 @@ impl AppState {
                 editor.reference_cursor = editor
                     .reference_cursor
                     .min(editor.references.len().saturating_sub(1));
+                mark_editor_dirty(editor);
+            }
+        }
+    }
+
+    fn current_variable_index(&self) -> Option<usize> {
+        let editor = self.editor.as_ref()?;
+        if editor.focus != 5 || editor.variables.is_empty() {
+            return None;
+        }
+        Some(editor.variable_cursor.min(editor.variables.len() - 1))
+    }
+
+    fn open_variable_form(&mut self, index: Option<usize>) {
+        let form = {
+            let Some(editor) = self.editor.as_ref() else {
+                return;
+            };
+            match index {
+                Some(i) if i < editor.variables.len() => {
+                    VariableForm::from_variable(&editor.variables[i], i)
+                }
+                _ => VariableForm::empty(),
+            }
+        };
+        if let Some(editor) = self.editor.as_mut() {
+            editor.variable_form = form;
+        }
+        self.mode = Mode::VariableEditor;
+    }
+
+    fn input_variable_form(&mut self, key: crossterm::event::KeyEvent) {
+        if let Some(editor) = &mut self.editor {
+            let focus = editor.variable_form.focus;
+            editor.variable_form.fields[focus].input(key);
+            editor.variable_form.error = None;
+        }
+    }
+
+    fn variable_form_next_field(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            let n = editor.variable_form.fields.len();
+            editor.variable_form.focus = (editor.variable_form.focus + 1) % n;
+        }
+    }
+
+    fn variable_form_prev_field(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            let n = editor.variable_form.fields.len();
+            editor.variable_form.focus = (editor.variable_form.focus + n - 1) % n;
+        }
+    }
+
+    fn save_variable_form(&mut self) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let symbol = editor.variable_form.field_text(0).trim().to_string();
+        let description = editor.variable_form.field_text(1).trim().to_string();
+        if symbol.is_empty() {
+            editor.variable_form.error = Some("Enter a symbol".to_string());
+            return;
+        }
+        if editor
+            .variables
+            .iter()
+            .enumerate()
+            .any(|(index, variable)| {
+                Some(index) != editor.variable_form.editing && variable.symbol == symbol
+            })
+        {
+            editor.variable_form.error = Some("Symbol already exists".to_string());
+            return;
+        }
+
+        let variable = Variable {
+            symbol,
+            description,
+        };
+        let editing = editor.variable_form.editing;
+        match editing {
+            Some(i) if i < editor.variables.len() => editor.variables[i] = variable,
+            _ => editor.variables.push(variable),
+        }
+        editor.variable_cursor = match editing {
+            Some(i) => i.min(editor.variables.len().saturating_sub(1)),
+            None => editor.variables.len().saturating_sub(1),
+        };
+        let display = format_variables(&editor.variables);
+        editor.set_field_text(5, display);
+        mark_editor_dirty(editor);
+        self.mode = Mode::Editor;
+    }
+
+    fn remove_variable(&mut self, index: usize) {
+        if let Some(editor) = &mut self.editor {
+            if index < editor.variables.len() {
+                editor.variables.remove(index);
+                editor.variable_cursor = editor
+                    .variable_cursor
+                    .min(editor.variables.len().saturating_sub(1));
+                let display = format_variables(&editor.variables);
+                editor.set_field_text(5, display);
                 mark_editor_dirty(editor);
             }
         }
@@ -2226,13 +2443,14 @@ impl AppState {
         let last_saved_signature = editor.last_saved_signature.clone();
         let related_ids = editor.related.clone();
         let references = editor.references.clone();
+        let variables = editor.variables.clone();
         if fields[0].trim().is_empty() {
             return Ok(());
         }
         if fields[2].trim().is_empty() {
             return Ok(());
         }
-        let signature = fields_signature(&fields, &related_ids, &references);
+        let signature = fields_signature(&fields, &related_ids, &references, &variables);
         if signature == last_saved_signature {
             if let Some(editor) = &mut self.editor {
                 editor.dirty = false;
@@ -2262,7 +2480,7 @@ impl AppState {
                 .map(ToOwned::to_owned)
                 .collect()
         };
-        equation.variables = parse_variables(&fields[5]);
+        equation.variables = variables.clone();
         equation.related = related_ids;
         equation.updated_at = nullspace_core::store::now_rfc3339();
         let saved_id = equation.id;
@@ -2448,22 +2666,6 @@ fn format_variables(variables: &[Variable]) -> String {
         .join("\n")
 }
 
-fn parse_variables(raw: &str) -> Vec<Variable> {
-    let mut seen = std::collections::HashSet::new();
-    raw.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut parts = line.splitn(2, '=').map(str::trim);
-            Variable {
-                symbol: parts.next().unwrap_or_default().to_string(),
-                description: parts.next().unwrap_or_default().to_string(),
-            }
-        })
-        .filter(|v| seen.insert(v.symbol.clone()))
-        .collect()
-}
-
 fn format_related(related: &[EquationId], items: &[EquationSummary]) -> String {
     related
         .iter()
@@ -2477,6 +2679,7 @@ fn fields_signature(
     fields: &[String; 7],
     related: &[EquationId],
     references: &[Reference],
+    variables: &[Variable],
 ) -> String {
     let related_part = related
         .iter()
@@ -2498,17 +2701,27 @@ fn fields_signature(
         })
         .collect::<Vec<_>>()
         .join(";");
+    let variables_part = variables
+        .iter()
+        .map(|v| format!("{}|{}", v.symbol, v.description))
+        .collect::<Vec<_>>()
+        .join(";");
     format!(
-        "{}\u{1f}{}\u{1f}{}",
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
         fields.join("\u{1f}"),
         related_part,
-        references_part
+        references_part,
+        variables_part
     )
 }
 
 fn mark_editor_dirty(editor: &mut EditorState) {
     editor.dirty = true;
     editor.last_change = Instant::now();
+}
+
+fn is_list_field(index: usize) -> bool {
+    matches!(index, 3 | 5 | 6)
 }
 
 fn related_picker_items_for(
@@ -2724,8 +2937,8 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 mod tests {
     use super::{
         command_matches, default_equation_px, effective_render_px, fuzzy_matches_item,
-        is_supported_reference_target, textarea_from_text, textarea_lines, textarea_text,
-        CmdlineState,
+        is_supported_reference_target, set_textarea_text, textarea_from_text, textarea_lines,
+        textarea_text, CmdlineState,
     };
     use crate::action::Action;
     use crate::event::map_key;
@@ -2891,6 +3104,41 @@ mod tests {
 
         assert!(matches!(app.mode, super::Mode::TagPicker));
         assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn variable_form_updates_list_display_and_saved_equation() {
+        let mut app = test_app();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.set_field_text(0, "Velocity".to_string());
+            editor.set_field_text(2, "v = x/t".to_string());
+            editor.focus = 5;
+        }
+
+        app.open_variable_form(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            set_textarea_text(&mut editor.variable_form.fields[0], "v".to_string());
+            set_textarea_text(&mut editor.variable_form.fields[1], "velocity".to_string());
+        }
+        app.save_variable_form();
+
+        let expected_variables = {
+            let editor = app.editor.as_ref().unwrap();
+            assert!(matches!(app.mode, super::Mode::Editor));
+            assert_eq!(editor.variables.len(), 1);
+            assert_eq!(editor.variables[0].symbol, "v");
+            assert_eq!(editor.variables[0].description, "velocity");
+            assert_eq!(editor.field_text(5), "v = velocity");
+            editor.variables.clone()
+        };
+
+        app.save_editor().unwrap();
+        let saved_id = app.editor.as_ref().unwrap().editing.unwrap();
+        let saved = app.store.get(saved_id).unwrap();
+        assert_eq!(saved.variables, expected_variables);
     }
 
     #[test]

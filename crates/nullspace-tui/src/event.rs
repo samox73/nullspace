@@ -134,6 +134,13 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmReferenceRemoveNo,
             _ => Action::None,
         },
+        Mode::ConfirmRemoveVariable(_) => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => {
+                Action::ConfirmVariableRemoveYes
+            }
+            KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmVariableRemoveNo,
+            _ => Action::None,
+        },
         Mode::RelatedPicker => match key.code {
             KeyCode::Esc => Action::RelatedPickerCancel,
             KeyCode::Tab | KeyCode::BackTab => Action::RelatedPickerToggleFocus,
@@ -182,6 +189,18 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
                 KeyCode::Tab => Action::ReferenceEditorNextField,
                 KeyCode::BackTab => Action::ReferenceEditorPrevField,
                 _ => Action::ReferenceEditorInput(key),
+            }
+        }
+        Mode::VariableEditor => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+                return Action::VariableEditorSave;
+            }
+            match key.code {
+                KeyCode::Esc => Action::VariableEditorCancel,
+                KeyCode::Enter => Action::VariableEditorSave,
+                KeyCode::Tab => Action::VariableEditorNextField,
+                KeyCode::BackTab => Action::VariableEditorPrevField,
+                _ => Action::VariableEditorInput(key),
             }
         }
     }

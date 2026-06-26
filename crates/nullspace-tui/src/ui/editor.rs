@@ -32,7 +32,7 @@ const PLACEHOLDERS: [&str; 7] = [
 const MIN_TEXT_BOX_LINES: u16 = 1;
 const MAX_TEXT_BOX_LINES: u16 = 10;
 const BLOCK_CHROME_ROWS: u16 = 2;
-const MULTILINE_FIELDS: [usize; 3] = [1, 2, 5];
+const MULTILINE_FIELDS: [usize; 2] = [1, 2];
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
@@ -68,6 +68,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             };
             let title = match index {
                 3 => "References (a add, enter edit, o open, d remove)",
+                5 => "Variables (a add, enter edit, d remove)",
                 6 => "Related (up/down select, enter open, r edit)",
                 _ => LABELS[index],
             };
@@ -99,6 +100,16 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 );
                 continue;
             }
+            if index == 5 {
+                render_variable_field(
+                    frame,
+                    *area,
+                    block,
+                    &editor.variables,
+                    editor.variable_cursor,
+                );
+                continue;
+            }
             editor.fields[index].set_block(block);
             editor.fields[index].set_cursor_line_style(Style::default());
             editor.fields[index].set_cursor_style(if index == editor.focus && cursor_visible {
@@ -122,11 +133,17 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     if matches!(app.mode, Mode::ReferenceEditor) {
         draw_reference_editor(frame, app);
     }
+    if matches!(app.mode, Mode::VariableEditor) {
+        draw_variable_editor(frame, app);
+    }
     if let Mode::ConfirmRemoveRelated(id) = app.mode {
         draw_remove_related_confirm(frame, app, id);
     }
     if let Mode::ConfirmRemoveReference(index) = app.mode {
         draw_remove_reference_confirm(frame, app, index);
+    }
+    if let Mode::ConfirmRemoveVariable(index) = app.mode {
+        draw_remove_variable_confirm(frame, app, index);
     }
     widgets::status_bar(frame, outer[1], app);
 }
@@ -148,6 +165,7 @@ fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<C
         .map(|index| match index {
             0 | 4 => Constraint::Length(3),
             3 => Constraint::Length(reference_box_height(editor)),
+            5 => Constraint::Length(variable_box_height(editor)),
             6 => Constraint::Min(3),
             _ if MULTILINE_FIELDS.contains(&index) => {
                 Constraint::Length(text_box_height(editor, index, width))
@@ -159,6 +177,11 @@ fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<C
 
 fn reference_box_height(editor: &crate::app::EditorState) -> u16 {
     let content = (editor.references.len() as u16).saturating_mul(2).max(2);
+    (content + BLOCK_CHROME_ROWS).min(MAX_TEXT_BOX_LINES + BLOCK_CHROME_ROWS)
+}
+
+fn variable_box_height(editor: &crate::app::EditorState) -> u16 {
+    let content = (editor.variables.len() as u16).max(2);
     (content + BLOCK_CHROME_ROWS).min(MAX_TEXT_BOX_LINES + BLOCK_CHROME_ROWS)
 }
 
@@ -328,6 +351,43 @@ fn render_reference_field(
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+fn render_variable_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    block: Block<'_>,
+    variables: &[nullspace_core::Variable],
+    cursor: usize,
+) {
+    if variables.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No variables\n\nPress a to add one")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(block)
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+    let items = variables
+        .iter()
+        .map(|variable| {
+            let text = if variable.description.trim().is_empty() {
+                variable.symbol.clone()
+            } else {
+                format!("{} = {}", variable.symbol, variable.description)
+            };
+            ListItem::new(Line::from(text))
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    state.select(Some(cursor.min(items.len().saturating_sub(1))));
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
 fn draw_reference_editor(frame: &mut Frame<'_>, app: &mut AppState) {
     let Some(editor) = &mut app.editor else {
         return;
@@ -383,6 +443,57 @@ fn draw_reference_editor(frame: &mut Frame<'_>, app: &mut AppState) {
     frame.render_widget(Paragraph::new(hint), rows[6]);
 }
 
+fn draw_variable_editor(frame: &mut Frame<'_>, app: &mut AppState) {
+    let Some(editor) = &mut app.editor else {
+        return;
+    };
+    let area = centered_rect(56, 10, frame.area());
+    frame.render_widget(Clear, area);
+    let outer = Block::default().title("Variable").borders(Borders::ALL);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    for index in 0..2 {
+        let focused = editor.variable_form.focus == index;
+        let style = if focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let block = Block::default()
+            .title(crate::app::VARIABLE_FIELD_LABELS[index])
+            .borders(Borders::ALL)
+            .border_style(style);
+        editor.variable_form.fields[index].set_block(block);
+        editor.variable_form.fields[index].set_cursor_style(if focused {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        });
+        frame.render_widget(&editor.variable_form.fields[index], rows[index]);
+    }
+
+    let hint = match &editor.variable_form.error {
+        Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
+        None => Line::styled(
+            "tab next - shift-tab prev - enter save - esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ),
+    };
+    frame.render_widget(Paragraph::new(hint), rows[2]);
+}
+
 fn draw_remove_reference_confirm(frame: &mut Frame<'_>, app: &AppState, index: usize) {
     let citation = app
         .editor
@@ -394,6 +505,23 @@ fn draw_remove_reference_confirm(frame: &mut Frame<'_>, app: &AppState, index: u
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(format!("Remove reference \"{citation}\"? (y/n)"))
+            .block(Block::default().title("Confirm").borders(Borders::ALL))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_remove_variable_confirm(frame: &mut Frame<'_>, app: &AppState, index: usize) {
+    let symbol = app
+        .editor
+        .as_ref()
+        .and_then(|editor| editor.variables.get(index))
+        .map(|variable| variable.symbol.as_str())
+        .unwrap_or("this variable");
+    let area = centered_rect(54, 5, frame.area());
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(format!("Remove variable \"{symbol}\"? (y/n)"))
             .block(Block::default().title("Confirm").borders(Borders::ALL))
             .wrap(Wrap { trim: false }),
         area,
