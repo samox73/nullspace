@@ -9,6 +9,7 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
     match app.mode {
         Mode::Browser => match key.code {
             KeyCode::Char('q') => Action::Quit,
+            KeyCode::Char(':') => Action::OpenCmdline,
             KeyCode::Char('/') => Action::StartSearch,
             KeyCode::Esc => Action::ClearFilter,
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
@@ -23,6 +24,21 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Char('+') | KeyCode::Char('=') => Action::PreviewZoomIn,
             KeyCode::Char('-') => Action::PreviewZoomOut,
             KeyCode::Enter => Action::OpenCurrent,
+            _ => Action::None,
+        },
+        Mode::Cmdline => match key.code {
+            KeyCode::Esc => Action::CmdlineCancel,
+            KeyCode::Tab | KeyCode::BackTab => Action::CmdlineAccept,
+            KeyCode::Enter => Action::CmdlineExecute,
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Char(_) => Action::CmdlineInput(key),
             _ => Action::None,
         },
         Mode::Search => match key.code {

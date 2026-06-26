@@ -62,6 +62,16 @@ impl Graphics {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn test(cell_size_px: TerminalCellSize) -> Self {
+        Self {
+            picker: Picker::halfblocks(),
+            graphics_ok: false,
+            cell_size_px,
+            palette: None,
+        }
+    }
+
     pub fn recolor(&self, image: RgbaImage) -> RgbaImage {
         if let Some(palette) = self.palette {
             recolor_image(image, palette)

@@ -40,6 +40,7 @@ const DEFAULT_EQUATION_ROWS: u32 = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Browser,
+    Cmdline,
     Search,
     Editor,
     RelatedPicker,
@@ -161,6 +162,13 @@ pub enum BrowserFilterFocus {
     List,
 }
 
+#[derive(Clone)]
+pub struct CmdlineState {
+    pub input: String,
+    pub cursor: usize,
+    pub selected: usize,
+}
+
 pub struct AppState {
     pub store: Store,
     pub mode: Mode,
@@ -180,6 +188,7 @@ pub struct AppState {
     pub status: String,
     pub selected: Option<Equation>,
     pub editor: Option<EditorState>,
+    pub cmdline: Option<CmdlineState>,
     pub preview_protocol: Option<StatefulProtocol>,
     pub preview_error: Option<String>,
     pub preview_latex: String,
@@ -249,6 +258,7 @@ impl AppState {
             status: "Ready".to_string(),
             selected: None,
             editor: None,
+            cmdline: None,
             preview_protocol: None,
             preview_error: None,
             preview_latex: String::new(),
@@ -401,6 +411,95 @@ impl AppState {
         Ok(())
     }
 
+    fn input_cmdline(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        let Some(cmdline) = &mut self.cmdline else {
+            return;
+        };
+        match key.code {
+            KeyCode::Char(ch) => {
+                cmdline.input.insert(cmdline.cursor, ch);
+                cmdline.cursor += ch.len_utf8();
+                cmdline.selected = 0;
+            }
+            KeyCode::Backspace => {
+                if cmdline.cursor > 0 {
+                    let start = prev_boundary(&cmdline.input, cmdline.cursor);
+                    cmdline.input.replace_range(start..cmdline.cursor, "");
+                    cmdline.cursor = start;
+                    cmdline.selected = 0;
+                }
+            }
+            KeyCode::Delete => {
+                if cmdline.cursor < cmdline.input.len() {
+                    let end = next_boundary(&cmdline.input, cmdline.cursor);
+                    cmdline.input.replace_range(cmdline.cursor..end, "");
+                    cmdline.selected = 0;
+                }
+            }
+            KeyCode::Up => cycle_cmdline_selection(cmdline, false),
+            KeyCode::Down => cycle_cmdline_selection(cmdline, true),
+            KeyCode::Left => {
+                cmdline.cursor = prev_boundary(&cmdline.input, cmdline.cursor);
+            }
+            KeyCode::Right => {
+                if cmdline.cursor == cmdline.input.len()
+                    && selected_command(&cmdline.input, cmdline.selected).is_some()
+                {
+                    accept_cmdline_state(cmdline);
+                } else {
+                    cmdline.cursor = next_boundary(&cmdline.input, cmdline.cursor);
+                }
+            }
+            KeyCode::Home => cmdline.cursor = 0,
+            KeyCode::End => cmdline.cursor = cmdline.input.len(),
+            _ => {}
+        }
+    }
+
+    fn accept_cmdline(&mut self) {
+        if let Some(cmdline) = &mut self.cmdline {
+            accept_cmdline_state(cmdline);
+        }
+    }
+
+    fn execute_cmdline(&mut self) {
+        let input = self
+            .cmdline
+            .as_ref()
+            .map(|cmdline| cmdline.input.clone())
+            .unwrap_or_default();
+        let selected = self
+            .cmdline
+            .as_ref()
+            .map(|cmdline| cmdline.selected)
+            .unwrap_or_default();
+        let command = exact_command(&input).or_else(|| selected_command(&input, selected));
+
+        self.cmdline = None;
+        self.mode = Mode::Browser;
+        self.force_preview_redraw();
+
+        match command.and_then(command_action) {
+            Some(action) => self.apply(action),
+            None => {
+                self.status = format!("Unknown command: {input}");
+            }
+        }
+    }
+
+    /// Force the live preview to re-encode and re-emit its graphics so they repaint
+    /// over wherever a transient overlay (the cmdline) was drawn. `Clear` only wipes
+    /// ratatui buffer cells — terminal-graphics images persist on screen until the
+    /// protocol actually re-renders, so closing an overlay otherwise leaves artifacts.
+    /// The decoded image stays in `self.cache`, so the re-encode is cheap.
+    fn force_preview_redraw(&mut self) {
+        self.preview_protocol = None;
+        self.protocol_cache.remove(&self.preview_cache_key);
+        self.dispatched_generation = self.generation.saturating_sub(1);
+    }
+
     fn input_browser_filter(&mut self, key: crossterm::event::KeyEvent) -> anyhow::Result<()> {
         use crossterm::event::KeyCode;
         let query = match &mut self.browser_filter {
@@ -502,6 +601,33 @@ impl AppState {
                 if let Some(id) = self.selected_id() {
                     self.mode = Mode::ConfirmDelete(id);
                 }
+                Ok(())
+            }
+            Action::OpenCmdline => {
+                self.cmdline = Some(CmdlineState {
+                    input: String::new(),
+                    cursor: 0,
+                    selected: 0,
+                });
+                self.mode = Mode::Cmdline;
+                Ok(())
+            }
+            Action::CmdlineInput(key) => {
+                self.input_cmdline(key);
+                Ok(())
+            }
+            Action::CmdlineAccept => {
+                self.accept_cmdline();
+                Ok(())
+            }
+            Action::CmdlineExecute => {
+                self.execute_cmdline();
+                Ok(())
+            }
+            Action::CmdlineCancel => {
+                self.cmdline = None;
+                self.mode = Mode::Browser;
+                self.force_preview_redraw();
                 Ok(())
             }
             Action::StartSearch => {
@@ -606,7 +732,7 @@ impl AppState {
                             Mode::Browser
                         }
                     }
-                    Mode::Search | Mode::Browser => Mode::Browser,
+                    Mode::Search | Mode::Cmdline | Mode::Browser => Mode::Browser,
                 };
                 self.schedule_selected();
                 Ok(())
@@ -781,7 +907,7 @@ impl AppState {
         }
 
         if self.needs_warm_submit
-            && matches!(self.mode, Mode::Browser | Mode::Search)
+            && matches!(self.mode, Mode::Browser | Mode::Cmdline | Mode::Search)
             && self.last_change.elapsed() >= Duration::from_millis(100)
         {
             self.schedule_warm_neighbors();
@@ -2149,6 +2275,65 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     }
 }
 
+const COMMANDS: [&str; 4] = ["delete", "exit", "new", "search"];
+
+pub fn command_matches(prefix: &str) -> Vec<&'static str> {
+    COMMANDS
+        .iter()
+        .copied()
+        .filter(|command| {
+            command.starts_with(prefix) || command_matches_ignore_case(command, prefix)
+        })
+        .collect()
+}
+
+fn selected_command(prefix: &str, selected: usize) -> Option<&'static str> {
+    let matches = command_matches(prefix);
+    matches
+        .get(selected.min(matches.len().saturating_sub(1)))
+        .copied()
+}
+
+fn exact_command(input: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .copied()
+        .find(|command| command.eq_ignore_ascii_case(input))
+}
+
+fn command_action(command: &str) -> Option<Action> {
+    match command {
+        "delete" => Some(Action::DeleteRequest),
+        "exit" => Some(Action::Quit),
+        "new" => Some(Action::NewEquation),
+        "search" => Some(Action::StartSearch),
+        _ => None,
+    }
+}
+
+fn accept_cmdline_state(cmdline: &mut CmdlineState) {
+    if let Some(command) = selected_command(&cmdline.input, cmdline.selected) {
+        cmdline.input = command.to_string();
+        cmdline.cursor = cmdline.input.len();
+        cmdline.selected = 0;
+    }
+}
+
+fn cycle_cmdline_selection(cmdline: &mut CmdlineState, forward: bool) {
+    let count = command_matches(&cmdline.input).len();
+    if count == 0 {
+        cmdline.selected = 0;
+    } else if forward {
+        cmdline.selected = (cmdline.selected + 1) % count;
+    } else {
+        cmdline.selected = cmdline.selected.checked_sub(1).unwrap_or(count - 1);
+    }
+}
+
+fn command_matches_ignore_case(command: &str, prefix: &str) -> bool {
+    prefix.len() <= command.len() && command[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
 fn protocol_result_key(result: &ProtocolWarmResult) -> Option<u64> {
     match &result.outcome {
         ProtocolWarmOutcome::Ready { key, .. } | ProtocolWarmOutcome::Failed { key, .. } => {
@@ -2187,12 +2372,13 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_equation_px, effective_render_px, fuzzy_matches_item, textarea_from_text,
-        textarea_lines, textarea_text,
+        command_matches, default_equation_px, effective_render_px, fuzzy_matches_item,
+        textarea_from_text, textarea_lines, textarea_text, CmdlineState,
     };
-    use crate::graphics::TerminalCellSize;
+    use crate::graphics::{Graphics, TerminalCellSize};
     use nullspace_core::{EquationId, EquationSummary};
     use ratatui::layout::Size;
+    use std::path::PathBuf;
 
     #[test]
     fn textarea_round_trips_multiline_text() {
@@ -2227,6 +2413,95 @@ mod tests {
 
         assert!(!fuzzy_matches_item("Debye", &description_only));
         assert!(fuzzy_matches_item("Debye", &actual_match));
+    }
+
+    #[test]
+    fn command_matching_filters_by_prefix() {
+        assert_eq!(command_matches(""), ["delete", "exit", "new", "search"]);
+        assert_eq!(command_matches("s"), ["search"]);
+        assert_eq!(command_matches("D"), ["delete"]);
+    }
+
+    #[test]
+    fn cmdline_accept_completes_active_match() {
+        let mut app = test_app();
+        app.mode = super::Mode::Cmdline;
+        app.cmdline = Some(CmdlineState {
+            input: "se".to_string(),
+            cursor: 2,
+            selected: 0,
+        });
+
+        app.accept_cmdline();
+
+        let cmdline = app.cmdline.expect("cmdline should remain open");
+        assert_eq!(cmdline.input, "search");
+        assert_eq!(cmdline.cursor, "search".len());
+    }
+
+    #[test]
+    fn cmdline_selection_cycles_through_matches() {
+        let mut app = test_app_with_cmdline("");
+
+        app.input_cmdline(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.execute_cmdline();
+
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn execute_cmdline_exit_quits() {
+        let mut app = test_app_with_cmdline("exit");
+
+        app.execute_cmdline();
+
+        assert!(app.should_quit);
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn execute_cmdline_new_opens_editor() {
+        let mut app = test_app_with_cmdline("new");
+
+        app.execute_cmdline();
+
+        assert!(matches!(app.mode, super::Mode::Editor));
+        assert!(app.editor.is_some());
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn execute_cmdline_delete_opens_confirm_delete() {
+        let mut app = test_app_with_cmdline("delete");
+
+        app.execute_cmdline();
+
+        assert!(matches!(app.mode, super::Mode::ConfirmDelete(_)));
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn execute_cmdline_search_enters_search() {
+        let mut app = test_app_with_cmdline("search");
+
+        app.execute_cmdline();
+
+        assert!(matches!(app.mode, super::Mode::Search));
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn execute_cmdline_unknown_returns_to_browser_with_status() {
+        let mut app = test_app_with_cmdline("wat");
+
+        app.execute_cmdline();
+
+        assert!(matches!(app.mode, super::Mode::Browser));
+        assert_eq!(app.status, "Unknown command: wat");
+        assert!(app.cmdline.is_none());
     }
 
     #[test]
@@ -2293,5 +2568,39 @@ mod tests {
         };
 
         assert_eq!(default_equation_px(cell_size), 100);
+    }
+
+    fn test_app_with_cmdline(input: &str) -> super::AppState {
+        let mut app = test_app();
+        app.mode = super::Mode::Cmdline;
+        app.cmdline = Some(CmdlineState {
+            input: input.to_string(),
+            cursor: input.len(),
+            selected: 0,
+        });
+        app
+    }
+
+    fn test_app() -> super::AppState {
+        let path = test_db_path();
+        let _ = std::fs::remove_file(&path);
+        super::AppState::open(
+            &path,
+            Graphics::test(TerminalCellSize {
+                width: 10,
+                height: 20,
+            }),
+        )
+        .expect("test app should open")
+    }
+
+    fn test_db_path() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "nullspace-cmdline-test-{}-{:?}.sqlite3",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        path
     }
 }

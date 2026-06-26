@@ -10,15 +10,34 @@ pub const PREVIEW_PERCENT: u16 = 50;
 pub const PREVIEW_VERTICAL_ROWS: u16 = 7;
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
+    let cmdline_area = primary_pane_area(frame.area(), app.layout);
     match app.mode {
-        Mode::Browser | Mode::Search | Mode::ConfirmDelete(_) => browser::draw(frame, app),
+        Mode::Browser | Mode::Search | Mode::ConfirmDelete(_) => {
+            widgets::clear_cmdline_overlay(frame, cmdline_area);
+            browser::draw(frame, app);
+        }
+        Mode::Cmdline => {
+            browser::draw(frame, app);
+            widgets::cmdline(frame, cmdline_area, app);
+        }
         Mode::Editor
         | Mode::RelatedPicker
         | Mode::ConfirmRemoveRelated(_)
         | Mode::ReferenceEditor
-        | Mode::ConfirmRemoveReference(_) => editor::draw(frame, app),
+        | Mode::ConfirmRemoveReference(_) => {
+            widgets::clear_cmdline_overlay(frame, cmdline_area);
+            editor::draw(frame, app);
+        }
     }
     widgets::notification(frame, app);
+}
+
+pub fn primary_pane_area(area: Rect, orientation: LayoutOrientation) -> Rect {
+    let content = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area)[0];
+    content_panes(content, orientation).0
 }
 
 pub fn content_panes(area: Rect, orientation: LayoutOrientation) -> (Rect, Rect) {
@@ -48,7 +67,7 @@ pub fn content_panes(area: Rect, orientation: LayoutOrientation) -> (Rect, Rect)
 
 #[cfg(test)]
 mod tests {
-    use super::{content_panes, PREVIEW_VERTICAL_ROWS};
+    use super::{content_panes, primary_pane_area, PREVIEW_PERCENT, PREVIEW_VERTICAL_ROWS};
     use crate::app::LayoutOrientation;
     use ratatui::layout::Rect;
 
@@ -72,5 +91,13 @@ mod tests {
         assert_eq!(primary.height, 40);
         assert_eq!(preview.height, 40);
         assert!(preview.x >= primary.x + primary.width - 1);
+    }
+
+    #[test]
+    fn primary_pane_area_excludes_preview_and_status_bar() {
+        let area = Rect::new(0, 0, 100, 30);
+        let primary = primary_pane_area(area, LayoutOrientation::Horizontal);
+
+        assert_eq!(primary, Rect::new(0, 0, 100 - PREVIEW_PERCENT, 29));
     }
 }

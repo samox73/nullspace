@@ -10,7 +10,12 @@ use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
 use nullspace_core::EquationSummary;
 
-use crate::app::{AppState, Mode};
+use crate::app::{command_matches, AppState, Mode};
+
+const CMDLINE_WIDTH: u16 = 60;
+const CMDLINE_PROMPT_HEIGHT: u16 = 3;
+const CMDLINE_LIST_MAX_HEIGHT: u16 = 8;
+const CMDLINE_TOP_OFFSET: u16 = 2;
 
 #[derive(Debug, Clone)]
 pub struct EquationListRow {
@@ -113,6 +118,70 @@ pub fn search_box(frame: &mut Frame<'_>, area: Rect, props: SearchBox<'_>) {
             inner.x + label_width + cursor_column.min(input_width) as u16,
             inner.y,
         ));
+    }
+}
+
+pub fn cmdline(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
+    let Some(cmdline) = &app.cmdline else {
+        return;
+    };
+
+    let matches = command_matches(&cmdline.input);
+    let selected = cmdline.selected.min(matches.len().saturating_sub(1));
+    let ghost = matches
+        .get(selected)
+        .and_then(|command| command_ghost(command, &cmdline.input))
+        .unwrap_or("");
+    let prompt_area = cmdline_prompt_area(area);
+    let block = Block::default().title("Cmdline").borders(Borders::ALL);
+    let inner = block.inner(prompt_area);
+    let cursor_column = 2 + cmdline.input[..cmdline.cursor].chars().count() as u16;
+
+    frame.render_widget(Clear, prompt_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::raw("> "),
+            Span::raw(cmdline.input.clone()),
+            Span::styled(ghost.to_string(), Style::default().fg(Color::DarkGray)),
+        ]))
+        .block(block),
+        prompt_area,
+    );
+    if inner.height > 0 {
+        frame.set_cursor_position(Position::new(
+            inner.x + cursor_column.min(inner.width.saturating_sub(1)),
+            inner.y,
+        ));
+    }
+
+    if matches.is_empty() {
+        return;
+    }
+    let list_height = (matches.len() as u16 + 2).min(CMDLINE_LIST_MAX_HEIGHT);
+    let list_area = cmdline_list_area(area, list_height);
+    let items = matches
+        .into_iter()
+        .map(|command| ListItem::new(Line::from(command)))
+        .collect::<Vec<_>>();
+    let list = List::new(items)
+        .block(Block::default().title("Commands").borders(Borders::ALL))
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    let mut state = ListState::default().with_selected(Some(selected));
+
+    frame.render_widget(Clear, list_area);
+    frame.render_stateful_widget(list, list_area, &mut state);
+}
+
+pub fn clear_cmdline_overlay(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(Clear, cmdline_prompt_area(area));
+    frame.render_widget(Clear, cmdline_list_area(area, CMDLINE_LIST_MAX_HEIGHT));
+}
+
+fn command_ghost<'a>(command: &'a str, input: &str) -> Option<&'a str> {
+    if input.len() < command.len() && command[..input.len()].eq_ignore_ascii_case(input) {
+        Some(&command[input.len()..])
+    } else {
+        None
     }
 }
 
@@ -242,6 +311,7 @@ pub fn status_bar(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Mode::Browser => {
             "j/k move  / search  enter edit  +/- zoom  v layout  n new  c clone  y copy latex  d delete  q quit"
         }
+        Mode::Cmdline => "type command  tab/-> accept  enter run  esc cancel",
         Mode::Search => "tab focus  j/k move list  enter apply  esc clear",
         Mode::Editor => "tab field  esc back",
         Mode::RelatedPicker => "j/k move  space toggle  enter apply  esc cancel",
@@ -305,4 +375,34 @@ fn bottom_right(area: Rect, width: u16, height: u16) -> Rect {
         ])
         .split(vertical[1]);
     horizontal[1]
+}
+
+fn top_centered_rect(width: u16, height: u16, area: Rect, top_offset: u16) -> Rect {
+    let y = area.y + top_offset.min(area.height);
+    let available_height = area.height.saturating_sub(top_offset);
+    let clamped_width = width.min(area.width);
+    Rect {
+        x: area.x + area.width.saturating_sub(clamped_width) / 2,
+        y,
+        width: clamped_width,
+        height: height.min(available_height),
+    }
+}
+
+fn cmdline_prompt_area(area: Rect) -> Rect {
+    top_centered_rect(
+        CMDLINE_WIDTH,
+        CMDLINE_PROMPT_HEIGHT,
+        area,
+        CMDLINE_TOP_OFFSET,
+    )
+}
+
+fn cmdline_list_area(area: Rect, height: u16) -> Rect {
+    top_centered_rect(
+        CMDLINE_WIDTH,
+        height,
+        area,
+        CMDLINE_TOP_OFFSET.saturating_add(CMDLINE_PROMPT_HEIGHT),
+    )
 }
