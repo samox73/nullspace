@@ -333,16 +333,6 @@ pub enum BrowserFilterFocus {
 }
 
 #[derive(Clone)]
-pub enum QuantityPickerBackTarget {
-    None,
-    ReturnTo(Mode),
-    ReturnToEditor {
-        filter: BrowserFilter,
-        selected: Option<EquationId>,
-    },
-}
-
-#[derive(Clone)]
 pub struct CmdlineState {
     pub input: String,
     pub cursor: usize,
@@ -354,6 +344,18 @@ pub struct CmdlineState {
 pub enum TagPickerRow {
     Untagged { count: usize },
     Tag { name: String, count: usize },
+}
+
+#[derive(Clone)]
+struct NavSnapshot {
+    mode: Mode,
+    browser_filter: BrowserFilter,
+    cursor: usize,
+    list_scroll_offset: usize,
+    selected_id: Option<EquationId>,
+    editor: Option<EditorState>,
+    quantity_cursor: usize,
+    quantity_scroll_offset: usize,
 }
 
 pub struct AppState {
@@ -371,7 +373,6 @@ pub struct AppState {
     pub quantity_cursor: usize,
     pub quantity_scroll_offset: usize,
     pub quantity_visible_height: u16,
-    pub quantity_picker_back: QuantityPickerBackTarget,
     pub untagged_count: usize,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
@@ -399,7 +400,7 @@ pub struct AppState {
     pub preview_render_px: u32,
     pub preview_preserve_on_error: bool,
     pub notification: Option<Notification>,
-    editor_history: Vec<EditorState>,
+    nav_stack: Vec<NavSnapshot>,
     render_queue: RenderQueue,
     protocol_warm_worker: ProtocolWarmWorker,
     pending_protocol_results: VecDeque<ProtocolWarmResult>,
@@ -485,7 +486,6 @@ impl AppState {
             quantity_cursor: 0,
             quantity_scroll_offset: 0,
             quantity_visible_height: 0,
-            quantity_picker_back: QuantityPickerBackTarget::None,
             untagged_count: 0,
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
@@ -513,7 +513,7 @@ impl AppState {
             preview_render_px: default_equation_px,
             preview_preserve_on_error: false,
             notification: None,
-            editor_history: Vec::new(),
+            nav_stack: Vec::new(),
             render_queue: RenderQueue::spawn(),
             protocol_warm_worker: ProtocolWarmWorker::spawn(),
             pending_protocol_results: VecDeque::new(),
@@ -564,6 +564,60 @@ impl AppState {
 
     pub fn selected_trash_id(&self) -> Option<EquationId> {
         self.trash_items.get(self.trash_cursor).map(|item| item.id)
+    }
+
+    fn push_nav(&mut self) {
+        self.nav_stack.push(NavSnapshot {
+            mode: self.mode,
+            browser_filter: self.browser_filter.clone(),
+            cursor: self.cursor,
+            list_scroll_offset: self.list_scroll_offset,
+            selected_id: if matches!(self.mode, Mode::Editor) {
+                self.editor
+                    .as_ref()
+                    .and_then(|editor| editor.editing)
+                    .or_else(|| self.selected.as_ref().map(|equation| equation.id))
+            } else {
+                self.selected_id()
+                    .or_else(|| self.selected.as_ref().map(|equation| equation.id))
+            },
+            editor: self.editor.clone(),
+            quantity_cursor: self.quantity_cursor,
+            quantity_scroll_offset: self.quantity_scroll_offset,
+        });
+    }
+
+    fn clear_nav(&mut self) {
+        self.nav_stack.clear();
+    }
+
+    fn restore_nav(&mut self) -> anyhow::Result<bool> {
+        let Some(snapshot) = self.nav_stack.pop() else {
+            return Ok(false);
+        };
+        self.mode = snapshot.mode;
+        self.browser_filter = snapshot.browser_filter;
+        self.cursor = snapshot.cursor;
+        self.list_scroll_offset = snapshot.list_scroll_offset;
+        self.quantity_cursor = snapshot.quantity_cursor;
+        self.quantity_scroll_offset = snapshot.quantity_scroll_offset;
+        self.editor = snapshot.editor;
+        self.refresh_items()?;
+        if let Some(id) = snapshot.selected_id
+            && let Some(index) = self.items.iter().position(|item| item.id == id)
+        {
+            self.cursor = index;
+        }
+        if self.cursor >= self.items.len() {
+            self.cursor = self.items.len().saturating_sub(1);
+        }
+        self.list_scroll_offset = self.list_scroll_offset.min(self.cursor);
+        self.selected = snapshot
+            .selected_id
+            .and_then(|id| self.store.get(id).ok())
+            .or_else(|| self.selected_id().and_then(|id| self.store.get(id).ok()));
+        self.schedule_selected();
+        Ok(true)
     }
 
     pub fn browser_title(&self) -> String {
@@ -945,7 +999,7 @@ impl AppState {
                 Ok(())
             }
             Action::NewEquation => {
-                self.editor_history.clear();
+                self.clear_nav();
                 self.open_editor(None);
                 Ok(())
             }
@@ -953,6 +1007,7 @@ impl AppState {
             Action::CopyLatexToClipboard => self.copy_selected_latex_to_clipboard(),
             Action::OpenReference => self.open_reference(),
             Action::OpenEquations => {
+                self.clear_nav();
                 self.clear_browser_filter()?;
                 self.mode = Mode::Browser;
                 Ok(())
@@ -965,10 +1020,10 @@ impl AppState {
                 Ok(())
             }
             Action::OpenQuantities => {
+                self.push_nav();
                 self.quantities = self.store.quantities()?;
                 self.quantity_cursor = 0;
                 self.quantity_scroll_offset = 0;
-                self.quantity_picker_back = QuantityPickerBackTarget::ReturnTo(self.mode);
                 self.mode = Mode::QuantityPicker;
                 self.status = format!("Quantities: {} item(s)", self.quantities.len());
                 Ok(())
@@ -1074,8 +1129,13 @@ impl AppState {
                 Ok(())
             }
             Action::QuantityPickerApply => {
-                if let Some((quantity, _)) = self.quantities.get(self.quantity_cursor) {
-                    self.open_quantity_equations(quantity.id, quantity_label(quantity))?;
+                if let Some((id, label)) = self
+                    .quantities
+                    .get(self.quantity_cursor)
+                    .map(|(quantity, _)| (quantity.id, quantity_label(quantity)))
+                {
+                    self.push_nav();
+                    self.open_quantity_equations(id, label)?;
                 }
                 self.mode = Mode::Browser;
                 Ok(())
@@ -1098,7 +1158,13 @@ impl AppState {
                 }
                 Ok(())
             }
-            Action::QuantityPickerBack => self.close_quantity_picker(),
+            Action::QuantityPickerBack => {
+                if !self.restore_nav()? {
+                    self.mode = Mode::Browser;
+                    self.schedule_selected();
+                }
+                Ok(())
+            }
             Action::DeleteRequest => {
                 if let Some(id) = self.selected_id() {
                     self.mode = Mode::ConfirmDelete(id);
@@ -1252,7 +1318,7 @@ impl AppState {
             }
             Action::OpenCurrent => {
                 if let Some(id) = self.selected_id() {
-                    self.editor_history.clear();
+                    self.push_nav();
                     self.open_editor(Some(id));
                 }
                 Ok(())
@@ -1266,12 +1332,19 @@ impl AppState {
                 Ok(())
             }
             Action::Back => {
+                if matches!(self.mode, Mode::Editor)
+                    && self.editor.as_ref().is_some_and(|editor| editor.dirty)
+                {
+                    self.persist_editor(false)?;
+                }
+                if matches!(
+                    self.mode,
+                    Mode::Browser | Mode::Editor | Mode::QuantityPicker
+                ) && self.restore_nav()?
+                {
+                    return Ok(());
+                }
                 self.mode = match self.mode {
-                    Mode::Browser
-                        if matches!(self.browser_filter, BrowserFilter::Quantity { .. }) =>
-                    {
-                        Mode::QuantityPicker
-                    }
                     Mode::ConfirmDelete(_) => Mode::Browser,
                     Mode::ConfirmPurge(_) => Mode::Trash,
                     Mode::ConfirmRemoveQuantity(_) => Mode::QuantityPicker,
@@ -1281,19 +1354,8 @@ impl AppState {
                     Mode::ReferenceEditor => Mode::Editor,
                     Mode::VariableEditor => Mode::Editor,
                     Mode::Editor | Mode::RelatedPicker => {
-                        if matches!(self.mode, Mode::Editor)
-                            && self.editor.as_ref().is_some_and(|editor| editor.dirty)
-                        {
-                            self.persist_editor(false)?;
-                        }
-                        if let Some(previous) = self.editor_history.pop() {
-                            self.editor = Some(previous);
-                            self.schedule_selected();
-                            Mode::Editor
-                        } else {
-                            self.editor = None;
-                            Mode::Browser
-                        }
+                        self.editor = None;
+                        Mode::Browser
                     }
                     Mode::Search | Mode::Cmdline | Mode::Browser => Mode::Browser,
                     Mode::Trash => Mode::Browser,
@@ -2427,10 +2489,7 @@ impl AppState {
         {
             self.move_quantity_cursor_to(index);
         }
-        self.quantity_picker_back = QuantityPickerBackTarget::ReturnToEditor {
-            filter: self.browser_filter.clone(),
-            selected: self.editor.as_ref().and_then(|editor| editor.editing),
-        };
+        self.push_nav();
         self.mode = Mode::QuantityPicker;
         self.status = format!("Quantity: {label}");
         Ok(true)
@@ -2442,33 +2501,6 @@ impl AppState {
         self.refresh_items()?;
         self.status = format!("{}: {} match(es)", self.browser_title(), self.items.len());
         self.schedule_selected();
-        Ok(())
-    }
-
-    fn close_quantity_picker(&mut self) -> anyhow::Result<()> {
-        match std::mem::replace(
-            &mut self.quantity_picker_back,
-            QuantityPickerBackTarget::None,
-        ) {
-            QuantityPickerBackTarget::None => {}
-            QuantityPickerBackTarget::ReturnTo(mode) => {
-                self.mode = mode;
-                self.schedule_selected();
-            }
-            QuantityPickerBackTarget::ReturnToEditor { filter, selected } => {
-                self.browser_filter = filter;
-                self.cursor = 0;
-                self.refresh_items()?;
-                if let Some(id) = selected
-                    && let Some(index) = self.items.iter().position(|item| item.id == id)
-                {
-                    self.cursor = index;
-                    self.selected = self.store.get(id).ok();
-                }
-                self.mode = Mode::Editor;
-                self.schedule_selected();
-            }
-        }
         Ok(())
     }
 
@@ -3110,10 +3142,8 @@ impl AppState {
             self.open_related_picker();
             return;
         };
-        if let Some(current) = self.editor.clone() {
-            self.editor_history.push(current);
-            self.open_editor(Some(id));
-        }
+        self.push_nav();
+        self.open_editor(Some(id));
     }
 
     fn current_related_id(&self) -> Option<EquationId> {
@@ -3309,7 +3339,7 @@ impl AppState {
         self.notification = Some(Notification::info("equation saved"));
         self.status = "Saved".to_string();
         if exit_after_save {
-            self.editor_history.clear();
+            self.clear_nav();
             self.editor = None;
             self.mode = Mode::Browser;
         }
@@ -3982,10 +4012,7 @@ mod tests {
         app.apply(action);
 
         assert!(matches!(app.mode, super::Mode::QuantityPicker));
-        assert!(matches!(
-            app.browser_filter,
-            super::BrowserFilter::Quantity { id, .. } if id == quantity.id
-        ));
+        assert_eq!(app.browser_filter, super::BrowserFilter::None);
     }
 
     #[test]
@@ -4125,6 +4152,67 @@ mod tests {
         assert!(matches!(app.mode, super::Mode::Browser));
         assert_eq!(app.browser_filter, super::BrowserFilter::None);
         assert_eq!(app.selected_id(), Some(equation_id));
+    }
+
+    #[test]
+    fn deep_quantity_drilldown_unwinds_without_empty_editor() {
+        let mut app = test_app();
+        let quantity = Quantity::new("E".to_string());
+        let mut equation = Equation::new("Energy test".to_string(), "E_{deep} = x".to_string());
+        equation.variables = vec![Variable {
+            symbol: "E".to_string(),
+            description: "energy".to_string(),
+            quantity_id: Some(quantity.id),
+        }];
+        let equation_id = equation.id;
+        app.store.insert_quantity(&quantity).unwrap();
+        app.store.insert(&equation).unwrap();
+        app.reload().unwrap();
+        app.cursor = app
+            .items
+            .iter()
+            .position(|item| item.id == equation_id)
+            .unwrap();
+        app.apply(Action::OpenCurrent);
+        app.editor.as_mut().unwrap().focus = EditorField::Variables;
+
+        app.input_editor(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.apply(Action::QuantityPickerApply);
+        app.apply(Action::OpenCurrent);
+        assert!(matches!(app.mode, super::Mode::Editor));
+        assert!(app.editor.is_some());
+
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        assert!(matches!(app.mode, super::Mode::Browser));
+        assert!(matches!(
+            app.browser_filter,
+            super::BrowserFilter::Quantity { id, .. } if id == quantity.id
+        ));
+
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        assert!(matches!(app.mode, super::Mode::QuantityPicker));
+
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        assert!(matches!(app.mode, super::Mode::Editor));
+        assert!(app.editor.is_some());
+
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        assert!(matches!(app.mode, super::Mode::Browser));
+        assert_eq!(app.browser_filter, super::BrowserFilter::None);
+        assert_eq!(app.selected_id(), Some(equation_id));
+        assert!(!app.preview_latex.is_empty());
     }
 
     #[test]
