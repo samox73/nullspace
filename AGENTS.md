@@ -8,6 +8,7 @@ This is a Rust 2021 Cargo workspace with two members under `crates/`.
 ## Build, Test, and Development Commands
 
 - `cargo run -p nullspace-tui`: run the terminal app with the default local library database.
+- `cargo run -p nullspace-tui -- scan`: scan an equation image from the clipboard.
 - `make all`: shorthand for launching the TUI.
 - `NULLSPACE_DB=/tmp/nullspace.sqlite3 cargo run -p nullspace-tui`: run against an isolated database.
 - `cargo test`: run all workspace unit tests.

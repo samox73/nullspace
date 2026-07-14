@@ -83,8 +83,13 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             } else {
                 Style::default()
             };
+            let title = if app.scan_review && field == EditorField::Name {
+                "To be added - Ctrl+S confirm | +/- size | :rescan redo | Esc discard"
+            } else {
+                field_title(field)
+            };
             let block = Block::default()
-                .title(field_title(field))
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(if field == EditorField::Latex && latex_invalid {
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)

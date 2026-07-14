@@ -64,9 +64,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         Mode::Cmdline => {
             match app.cmdline.as_ref().map(|cmdline| cmdline.return_mode) {
                 Some(Mode::QuantityPicker) => widgets::quantity_picker(frame, app),
+                Some(Mode::Scan) => widgets::scan_screen(frame, app),
                 _ => browser::draw(frame, app),
             }
             widgets::cmdline(frame, cmdline_area, app);
+        }
+        Mode::Scan => {
+            widgets::clear_cmdline_overlay(frame, cmdline_area);
+            widgets::scan_screen(frame, app);
         }
         Mode::Editor
         | Mode::RelatedPicker

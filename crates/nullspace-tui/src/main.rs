@@ -13,9 +13,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use app::AppState;
+use app::{AppState, ScanAgent};
 use crossterm::event as ct_event;
 use nullspace_core::{DuplicatePolicy, Equation, Quantity, Store};
+use schemars::JsonSchema;
 
 fn main() -> anyhow::Result<()> {
     let default_hook = std::panic::take_hook();
@@ -25,6 +26,11 @@ fn main() -> anyhow::Result<()> {
     }));
 
     let args = Args::parse()?;
+    if let Some(path) = args.export_schema_path {
+        export_schema(&path)?;
+        return Ok(());
+    }
+
     let db_path = db_path()?;
     if let Some(path) = args.export_path {
         export_json(&db_path, &path)?;
@@ -39,6 +45,10 @@ fn main() -> anyhow::Result<()> {
     let result = (|| {
         let graphics = graphics::Graphics::detect();
         let mut app = AppState::open(&db_path, graphics)?;
+        app.scan_agent = args.scan_agent;
+        if args.scan {
+            app.start_scan(args.scan_agent);
+        }
         run(&mut terminal, &mut app)
     })();
     tui::restore()?;
@@ -46,19 +56,33 @@ fn main() -> anyhow::Result<()> {
 }
 
 struct Args {
+    scan: bool,
+    scan_agent: ScanAgent,
     export_path: Option<PathBuf>,
     import_path: Option<PathBuf>,
+    export_schema_path: Option<PathBuf>,
     duplicate_policy: DuplicatePolicy,
 }
 
 impl Args {
     fn parse() -> anyhow::Result<Self> {
+        let mut scan = false;
+        let mut scan_agent = ScanAgent::Claude;
         let mut export_path = None;
         let mut import_path = None;
+        let mut export_schema_path = None;
         let mut duplicate_policy = DuplicatePolicy::Skip;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "scan" => {
+                    scan = true;
+                }
+                "--agent" => {
+                    scan_agent = parse_scan_agent(
+                        &args.next().context("--agent requires claude or codex")?,
+                    )?;
+                }
                 "--export" => {
                     export_path = Some(PathBuf::from(
                         args.next().context("--export requires a path")?,
@@ -67,6 +91,11 @@ impl Args {
                 "--import" => {
                     import_path = Some(PathBuf::from(
                         args.next().context("--import requires a path")?,
+                    ));
+                }
+                "--export-schema" => {
+                    export_schema_path = Some(PathBuf::from(
+                        args.next().context("--export-schema requires a path")?,
                     ));
                 }
                 "--on-duplicate" => {
@@ -78,7 +107,7 @@ impl Args {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "Usage: nullspace [--export PATH] [--import PATH] [--on-duplicate skip|overwrite]"
+                        "Usage: nullspace [scan [--agent claude|codex]] [--export PATH] [--import PATH] [--export-schema PATH] [--on-duplicate skip|overwrite]"
                     );
                     std::process::exit(0);
                 }
@@ -89,14 +118,29 @@ impl Args {
                 other => anyhow::bail!("unknown argument: {other}"),
             }
         }
-        if export_path.is_some() && import_path.is_some() {
-            anyhow::bail!("--export and --import cannot be used together");
+        let mode_count = export_path.is_some() as u8
+            + import_path.is_some() as u8
+            + export_schema_path.is_some() as u8
+            + scan as u8;
+        if mode_count > 1 {
+            anyhow::bail!("scan, --export, --import, and --export-schema cannot be combined");
         }
         Ok(Self {
+            scan,
+            scan_agent,
             export_path,
             import_path,
+            export_schema_path,
             duplicate_policy,
         })
+    }
+}
+
+fn parse_scan_agent(raw: &str) -> anyhow::Result<ScanAgent> {
+    match raw {
+        "claude" => Ok(ScanAgent::Claude),
+        "codex" => Ok(ScanAgent::Codex),
+        other => anyhow::bail!("unknown scan agent: {other}"),
     }
 }
 
@@ -108,14 +152,29 @@ fn parse_duplicate_policy(raw: &str) -> anyhow::Result<DuplicatePolicy> {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, JsonSchema)]
 struct ExportFile {
     #[serde(default)]
     quantities: Vec<Quantity>,
     equations: Vec<Equation>,
 }
 
-fn parse_import(raw: &str) -> anyhow::Result<(Vec<Quantity>, Vec<Equation>)> {
+fn export_schema(output_path: &std::path::Path) -> anyhow::Result<()> {
+    let schema = export_file_schema();
+    let json = serde_json::to_string_pretty(&schema)?;
+    std::fs::write(output_path, json)?;
+    println!("exported schema to {}", output_path.display());
+    Ok(())
+}
+
+pub(crate) fn export_file_schema() -> schemars::Schema {
+    schemars::generate::SchemaSettings::draft2020_12()
+        .for_serialize()
+        .into_generator()
+        .into_root_schema_for::<ExportFile>()
+}
+
+pub(crate) fn parse_import(raw: &str) -> anyhow::Result<(Vec<Quantity>, Vec<Equation>)> {
     if let Ok(file) = serde_json::from_str::<ExportFile>(raw) {
         return Ok((file.quantities, file.equations));
     }
@@ -211,7 +270,7 @@ fn db_path() -> anyhow::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_import;
+    use super::{export_file_schema, parse_import};
     use nullspace_core::{Equation, Quantity, Variable};
 
     #[test]
@@ -246,6 +305,22 @@ mod tests {
         assert_eq!(
             equations[0].variables[0].quantity_id,
             Some(quantities[0].id)
+        );
+    }
+
+    #[test]
+    fn export_schema_uses_serialized_export_shape() {
+        let schema = serde_json::to_value(export_file_schema()).unwrap();
+
+        assert_eq!(
+            schema["required"],
+            serde_json::json!(["quantities", "equations"])
+        );
+        assert!(
+            schema["$defs"]["Equation"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("assumptions"))
         );
     }
 }

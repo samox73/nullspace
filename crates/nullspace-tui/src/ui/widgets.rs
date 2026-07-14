@@ -12,7 +12,7 @@ use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
 use nullspace_core::{EquationSummary, TrashEntry};
 
-use crate::app::{AppState, QUANTITY_FIELD_LABELS, TagPickerRow, command_matches};
+use crate::app::{AppState, QUANTITY_FIELD_LABELS, ScanPhase, TagPickerRow, command_matches};
 
 const CMDLINE_WIDTH: u16 = 60;
 const CMDLINE_PROMPT_HEIGHT: u16 = 3;
@@ -313,6 +313,101 @@ pub fn message_pane(frame: &mut Frame<'_>, area: Rect, title: &str, message: &'s
         Paragraph::new(message).alignment(Alignment::Center),
         centered_text_area(inner),
     );
+}
+
+pub fn scan_screen(frame: &mut Frame<'_>, app: &AppState) {
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(frame.area());
+    let Some(scan) = &app.scan else {
+        message_pane(frame, outer[0], "Scan", "No scan active");
+        status_bar(frame, outer[1], app);
+        return;
+    };
+    match scan.phase {
+        ScanPhase::AwaitingPaste => {
+            let block = Block::default().title("Scan").borders(Borders::ALL);
+            let inner = block.inner(outer[0]);
+            frame.render_widget(block, outer[0]);
+            let lines = vec![
+                Line::from("scan equation from image"),
+                Line::from(scan.settings_label()),
+                Line::from("m: model | i: intelligence"),
+                Line::from("copy an equation image, then press p to paste"),
+                Line::from("Esc to leave"),
+            ];
+            let area = centered_lines_area(inner, lines.len() as u16);
+            frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
+        }
+        ScanPhase::Running => {
+            let title = format!("Scanning... {}", app.cache_spinner());
+            scan_logs(frame, outer[0], &title, &scan.logs, None);
+        }
+        ScanPhase::Failed => {
+            scan_logs(
+                frame,
+                outer[0],
+                "Scan failed",
+                &scan.logs,
+                Some("p: paste again | :rescan: retry same image | Esc: leave"),
+            );
+        }
+    }
+    status_bar(frame, outer[1], app);
+}
+
+fn scan_logs(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    logs: &[String],
+    hint: Option<&'static str>,
+) {
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(area);
+    let hint_rows = hint.is_some() as u16;
+    let log_height = inner.height.saturating_sub(hint_rows) as usize;
+    let lines = visible_scan_log_lines(logs, log_height)
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    frame.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(hint_rows)])
+        .split(inner);
+    frame.render_widget(Paragraph::new(lines), chunks[0]);
+    if let Some(hint) = hint {
+        frame.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(Color::Yellow)),
+            chunks[1],
+        );
+    }
+}
+
+fn visible_scan_log_lines(logs: &[String], height: usize) -> Vec<String> {
+    let rows = logs
+        .iter()
+        .flat_map(|log| {
+            let rows = log.lines().collect::<Vec<_>>();
+            if rows.is_empty() { vec![""] } else { rows }
+        })
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    rows[rows.len().saturating_sub(height)..].to_vec()
+}
+
+fn centered_lines_area(area: Rect, height: u16) -> Rect {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(height.min(area.height)),
+            Constraint::Min(0),
+        ])
+        .split(area);
+    rows[1]
 }
 
 fn centered_text_area(area: Rect) -> Rect {
@@ -761,8 +856,13 @@ pub fn notification(frame: &mut Frame<'_>, app: &AppState) {
     if elapsed.as_secs_f32() >= 3.0 {
         return;
     }
+    let base_fg = if notification.is_error {
+        Color::Red
+    } else {
+        Color::White
+    };
     let style = if elapsed.as_secs_f32() < 1.5 {
-        Style::default().fg(Color::White).bg(Color::DarkGray)
+        Style::default().fg(base_fg).bg(Color::DarkGray)
     } else if elapsed.as_secs_f32() < 2.4 {
         Style::default().fg(Color::Gray).bg(Color::DarkGray)
     } else {
@@ -902,4 +1002,16 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
         ])
         .split(vertical[1]);
     horizontal[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_scan_log_lines;
+
+    #[test]
+    fn scan_logs_show_bottom_rows_after_multiline_events() {
+        let logs = vec!["one\ntwo\nthree".to_string(), "four".to_string()];
+
+        assert_eq!(visible_scan_log_lines(&logs, 2), ["three", "four"]);
+    }
 }

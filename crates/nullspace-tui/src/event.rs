@@ -190,6 +190,10 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             if !active {
                 return match key.code {
                     KeyCode::Esc => Action::Back,
+                    KeyCode::Char('+') | KeyCode::Char('=') if app.scan_review => {
+                        Action::PreviewZoomIn
+                    }
+                    KeyCode::Char('-') if app.scan_review => Action::PreviewZoomOut,
                     KeyCode::Enter => Action::EditorActivateField,
                     KeyCode::Char('j') | KeyCode::Down => Action::EditorNextField,
                     KeyCode::Char('k') | KeyCode::Up => Action::EditorPrevField,
@@ -255,6 +259,14 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             | KeyCode::Home
             | KeyCode::End
             | KeyCode::Char(_) => Action::ResolverInput(key),
+            _ => Action::None,
+        },
+        Mode::Scan => match key.code {
+            KeyCode::Char('p') => Action::ScanPaste,
+            KeyCode::Char('m') => Action::ScanCycleModel,
+            KeyCode::Char('i') => Action::ScanCycleEffort,
+            KeyCode::Char(':') => Action::OpenCmdline,
+            KeyCode::Esc => Action::Back,
             _ => Action::None,
         },
     }
