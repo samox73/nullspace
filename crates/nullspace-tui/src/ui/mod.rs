@@ -39,6 +39,28 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             widgets::clear_cmdline_overlay(frame, cmdline_area);
             widgets::tag_picker(frame, app);
         }
+        Mode::QuantityPicker | Mode::QuantityForm | Mode::ConfirmRemoveQuantity(_) => {
+            widgets::clear_cmdline_overlay(frame, cmdline_area);
+            widgets::quantity_picker(frame, app);
+            if matches!(app.mode, Mode::QuantityForm) {
+                widgets::quantity_form(frame, app);
+            }
+            if let Mode::ConfirmRemoveQuantity(id) = app.mode {
+                let (label, count) = app
+                    .quantities
+                    .iter()
+                    .find(|(quantity, _)| quantity.id == id)
+                    .map(|(quantity, count)| (crate::app::quantity_label(quantity), *count))
+                    .unwrap_or_else(|| ("selected quantity".to_string(), 0));
+                widgets::confirm_overlay(
+                    frame,
+                    "Confirm",
+                    format!(
+                        "Delete quantity \"{label}\"? {count} linked equation(s) will be unlinked. (y/d/enter to confirm, n/esc to cancel)"
+                    ),
+                );
+            }
+        }
         Mode::Cmdline => {
             browser::draw(frame, app);
             widgets::cmdline(frame, cmdline_area, app);
@@ -49,7 +71,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         | Mode::ReferenceEditor
         | Mode::ConfirmRemoveReference(_)
         | Mode::VariableEditor
-        | Mode::ConfirmRemoveVariable(_) => {
+        | Mode::ConfirmRemoveVariable(_)
+        | Mode::QuantityResolver => {
             widgets::clear_cmdline_overlay(frame, cmdline_area);
             editor::draw(frame, app);
         }

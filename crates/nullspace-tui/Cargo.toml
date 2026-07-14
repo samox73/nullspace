@@ -19,5 +19,6 @@ anyhow = "1"
 image = "0.25"
 libc = "0.2"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 rayon = "1"
 base64 = "0.22"

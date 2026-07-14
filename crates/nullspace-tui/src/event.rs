@@ -117,9 +117,29 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Esc | KeyCode::Char('q') => Action::TagPickerCancel,
             _ => Action::None,
         },
+        Mode::QuantityPicker => match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Action::QuantityPickerMoveDown,
+            KeyCode::Char('k') | KeyCode::Up => Action::QuantityPickerMoveUp,
+            KeyCode::Char('g') if app.vim_go_prefix => Action::QuantityPickerMoveToTop,
+            KeyCode::Char('g') => Action::StartGoPrefix,
+            KeyCode::Char('G') => Action::QuantityPickerMoveToBottom,
+            KeyCode::Enter => Action::QuantityPickerApply,
+            KeyCode::Char('n') => Action::QuantityPickerNew,
+            KeyCode::Char('e') => Action::QuantityPickerEdit,
+            KeyCode::Char('d') => Action::QuantityPickerDeleteRequest,
+            KeyCode::Esc | KeyCode::Char('q') => Action::QuantityPickerCancel,
+            _ => Action::None,
+        },
         Mode::ConfirmPurge(_) => match key.code {
             KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => Action::ConfirmPurgeYes,
             KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmPurgeNo,
+            _ => Action::None,
+        },
+        Mode::ConfirmRemoveQuantity(_) => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('d') | KeyCode::Enter => {
+                Action::ConfirmQuantityRemoveYes
+            }
+            KeyCode::Char('n') | KeyCode::Esc => Action::ConfirmQuantityRemoveNo,
             _ => Action::None,
         },
         Mode::ConfirmRemoveRelated(_) => match key.code {
@@ -172,7 +192,7 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
                 KeyCode::Home => Action::EditorHome,
                 KeyCode::End => Action::EditorEnd,
                 KeyCode::Char('o')
-                    if app.editor.as_ref().is_some_and(|editor| editor.focus == 3) =>
+                    if app.editor.as_ref().is_some_and(|editor| editor.focus == 4) =>
                 {
                     Action::OpenReference
                 }
@@ -203,5 +223,31 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
                 _ => Action::VariableEditorInput(key),
             }
         }
+        Mode::QuantityForm => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+                return Action::QuantityFormSave;
+            }
+            match key.code {
+                KeyCode::Esc => Action::QuantityFormCancel,
+                KeyCode::Enter => Action::QuantityFormSave,
+                KeyCode::Tab => Action::QuantityFormNextField,
+                KeyCode::BackTab => Action::QuantityFormPrevField,
+                _ => Action::QuantityFormInput(key),
+            }
+        }
+        Mode::QuantityResolver => match key.code {
+            KeyCode::Esc => Action::ResolverSkip,
+            KeyCode::Enter => Action::ResolverAccept,
+            KeyCode::Down => Action::ResolverMoveDown,
+            KeyCode::Up => Action::ResolverMoveUp,
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Char(_) => Action::ResolverInput(key),
+            _ => Action::None,
+        },
     }
 }

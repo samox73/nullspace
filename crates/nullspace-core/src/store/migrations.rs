@@ -13,8 +13,17 @@ CREATE TABLE IF NOT EXISTS equations (
     description TEXT NOT NULL DEFAULT '',
     latex       TEXT NOT NULL,
     px_height   INTEGER NOT NULL DEFAULT 48,
+    assumptions TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quantities (
+    id          TEXT PRIMARY KEY,
+    symbol      TEXT NOT NULL,
+    name        TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    units       TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS variables (
@@ -22,6 +31,7 @@ CREATE TABLE IF NOT EXISTS variables (
     symbol      TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     position    INTEGER NOT NULL,
+    quantity_id TEXT REFERENCES quantities(id) ON DELETE SET NULL,
     PRIMARY KEY (equation_id, symbol)
 );
 
@@ -78,6 +88,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 6 {
         migrate_v6(&tx)?;
+    }
+    if version < 7 {
+        migrate_v7(&tx)?;
     }
     tx.commit()?;
     Ok(())
@@ -191,6 +204,33 @@ fn migrate_v6(conn: &Connection) -> Result<()> {
         conn.execute("ALTER TABLE refs ADD COLUMN pages TEXT", [])?;
     }
     conn.pragma_update(None, "user_version", 6_i64)?;
+    Ok(())
+}
+
+fn migrate_v7(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS quantities (
+            id          TEXT PRIMARY KEY,
+            symbol      TEXT NOT NULL,
+            name        TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            units       TEXT NOT NULL DEFAULT ''
+        )",
+        [],
+    )?;
+    if table_exists(conn, "equations")? && !column_exists(conn, "equations", "assumptions")? {
+        conn.execute(
+            "ALTER TABLE equations ADD COLUMN assumptions TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if table_exists(conn, "variables")? && !column_exists(conn, "variables", "quantity_id")? {
+        conn.execute(
+            "ALTER TABLE variables ADD COLUMN quantity_id TEXT REFERENCES quantities(id) ON DELETE SET NULL",
+            [],
+        )?;
+    }
+    conn.pragma_update(None, "user_version", 7_i64)?;
     Ok(())
 }
 

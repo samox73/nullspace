@@ -12,7 +12,7 @@ use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
 use nullspace_core::{EquationSummary, TrashEntry};
 
-use crate::app::{AppState, TagPickerRow, command_matches};
+use crate::app::{AppState, QUANTITY_FIELD_LABELS, TagPickerRow, command_matches};
 
 const CMDLINE_WIDTH: u16 = 60;
 const CMDLINE_PROMPT_HEIGHT: u16 = 3;
@@ -387,7 +387,7 @@ pub fn help_modal(frame: &mut Frame<'_>) {
     let rows = help_rows().into_iter().map(|(context, key, action)| {
         Row::new([Cell::from(context), Cell::from(key), Cell::from(action)])
     });
-    let area = centered_rect(100, 28, frame.area());
+    let area = centered_rect(100, 33, frame.area());
     let table = Table::new(
         rows,
         [
@@ -467,6 +467,16 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         ("Tags", "Enter, Esc/q", "Filter by tag, cancel"),
         (
+            "Quantities",
+            "j/k, Up/Down, gg, G",
+            "Move selection; jump top/bottom",
+        ),
+        (
+            "Quantities",
+            "Enter, n, e, d, Esc/q",
+            "Filter by quantity, new, edit, delete, back",
+        ),
+        (
             "Editor",
             "Tab/Shift-Tab, Ctrl-S, Esc",
             "Field navigation, save, back",
@@ -476,6 +486,21 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
             "References field",
             "a, Enter, o, j/k, d",
             "Add, edit, open, move, remove reference",
+        ),
+        (
+            "Variables field",
+            "a, Enter, j/k, d",
+            "Add, edit, move, remove variable",
+        ),
+        (
+            "Variables field",
+            "c, u",
+            "Link all to quantities, unlink one",
+        ),
+        (
+            "Quantity resolver",
+            "Type, Up/Down, Enter, Esc",
+            "Filter, move, choose, skip",
         ),
         (
             "Related field",
@@ -555,6 +580,117 @@ pub fn tag_picker(frame: &mut Frame<'_>, app: &mut AppState) {
         .split(frame.area());
     tag_picker_list(frame, outer[0], app);
     status_bar(frame, outer[1], app);
+}
+
+pub fn quantity_picker(frame: &mut Frame<'_>, app: &mut AppState) {
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(frame.area());
+    quantity_picker_list(frame, outer[0], app);
+    status_bar(frame, outer[1], app);
+}
+
+fn quantity_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {
+    app.quantity_visible_height = area.height.saturating_sub(2);
+    if app.quantities.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "No quantities\n\nPress n to add one, or use c in an equation's Variables field",
+            )
+            .alignment(Alignment::Center)
+            .block(Block::default().title("Quantities").borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
+    let items = app
+        .quantities
+        .iter()
+        .map(|(quantity, count)| {
+            let detail = [
+                quantity.units.as_str(),
+                quantity.description.lines().next().unwrap_or(""),
+            ]
+            .into_iter()
+            .filter(|part| !part.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" - ");
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(
+                        crate::app::quantity_label(quantity),
+                        Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                    ),
+                    Span::raw(format!("  ({count} eq)")),
+                ]),
+                Line::styled(detail, Style::default().fg(Color::DarkGray)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title("Quantities  (enter filter, n new, e edit, d delete)")
+                .borders(Borders::ALL),
+        )
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    let mut state = ListState::default().with_offset(app.quantity_scroll_offset * 2);
+    state.select(Some(app.quantity_cursor.min(app.quantities.len() - 1)));
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+pub fn quantity_form(frame: &mut Frame<'_>, app: &mut AppState) {
+    let Some(form) = &mut app.quantity_form else {
+        return;
+    };
+    let area = centered_rect(60, 16, frame.area());
+    frame.render_widget(Clear, area);
+    let outer = Block::default().title("Quantity").borders(Borders::ALL);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    for index in 0..4 {
+        let focused = form.focus == index;
+        let block = Block::default()
+            .title(QUANTITY_FIELD_LABELS[index])
+            .borders(Borders::ALL)
+            .border_style(if focused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            });
+        form.fields[index].set_block(block);
+        form.fields[index].set_cursor_style(if focused {
+            Style::default().add_modifier(ratatui::style::Modifier::REVERSED)
+        } else {
+            Style::default()
+        });
+        if index == 3 {
+            form.fields[index].set_placeholder_text("SI: J; cgs: erg; a.u.: E_h");
+            form.fields[index].set_placeholder_style(Style::default().fg(Color::DarkGray));
+        }
+        frame.render_widget(&form.fields[index], rows[index]);
+    }
+    let hint = match &form.error {
+        Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
+        None => Line::styled(
+            "tab next - shift-tab prev - enter save - esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ),
+    };
+    frame.render_widget(Paragraph::new(hint), rows[4]);
 }
 
 fn tag_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {

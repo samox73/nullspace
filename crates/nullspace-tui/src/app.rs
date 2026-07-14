@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use nullspace_core::reference::{normalize_doi, normalize_pages, reference_link};
 use nullspace_core::{
-    Equation, EquationId, EquationSummary, Error, Reference, Store, TrashEntry, Variable,
-    render::validate_latex,
+    Equation, EquationId, EquationSummary, Error, Quantity, QuantityId, Reference, Store,
+    TrashEntry, Variable, render::validate_latex,
 };
 use ratatui::layout::Size;
 use ratatui_image::protocol::StatefulProtocol;
@@ -48,10 +48,14 @@ pub enum Mode {
     RelatedPicker,
     ReferenceEditor,
     VariableEditor,
+    QuantityPicker,
+    QuantityForm,
+    QuantityResolver,
     Trash,
     TagPicker,
     ConfirmDelete(EquationId),
     ConfirmPurge(EquationId),
+    ConfirmRemoveQuantity(QuantityId),
     ConfirmRemoveRelated(EquationId),
     ConfirmRemoveReference(usize),
     ConfirmRemoveVariable(usize),
@@ -72,7 +76,7 @@ pub enum LayoutOrientation {
 #[derive(Clone)]
 pub struct EditorState {
     pub editing: Option<EquationId>,
-    pub fields: [TextArea<'static>; 7],
+    pub fields: [TextArea<'static>; 8],
     pub focus: usize,
     pub related_cursor: usize,
     pub reference_cursor: usize,
@@ -93,7 +97,7 @@ impl EditorState {
         textarea_text(&self.fields[index])
     }
 
-    fn field_texts(&self) -> [String; 7] {
+    fn field_texts(&self) -> [String; 8] {
         std::array::from_fn(|index| self.field_text(index))
     }
 
@@ -104,6 +108,7 @@ impl EditorState {
 
 pub const REFERENCE_FIELD_LABELS: [&str; 6] = ["Authors", "Year", "Title", "DOI", "URL", "Page(s)"];
 pub const VARIABLE_FIELD_LABELS: [&str; 2] = ["Symbol", "Description"];
+pub const QUANTITY_FIELD_LABELS: [&str; 4] = ["Symbol", "Name", "Description", "Unit(s)"];
 
 #[derive(Clone)]
 pub struct ReferenceForm {
@@ -119,6 +124,31 @@ pub struct VariableForm {
     pub focus: usize,
     pub editing: Option<usize>,
     pub error: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct QuantityFormState {
+    pub fields: [TextArea<'static>; 4],
+    pub focus: usize,
+    pub editing: Option<QuantityId>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct QuantityResolverState {
+    pub queue: Vec<usize>,
+    pub position: usize,
+    pub query: String,
+    pub query_cursor: usize,
+    pub cursor: usize,
+    pub linked: usize,
+    pub created: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolverRow {
+    CreateNew,
+    Existing(QuantityId),
 }
 
 impl VariableForm {
@@ -178,6 +208,36 @@ impl ReferenceForm {
     }
 }
 
+impl QuantityFormState {
+    fn empty() -> Self {
+        Self {
+            fields: std::array::from_fn(|_| textarea_from_text("")),
+            focus: 0,
+            editing: None,
+            error: None,
+        }
+    }
+
+    fn from_quantity(quantity: &Quantity) -> Self {
+        let values = [
+            quantity.symbol.clone(),
+            quantity.name.clone(),
+            quantity.description.clone(),
+            quantity.units.clone(),
+        ];
+        Self {
+            fields: values.each_ref().map(|value| textarea_from_text(value)),
+            focus: 0,
+            editing: Some(quantity.id),
+            error: None,
+        }
+    }
+
+    fn field_text(&self, index: usize) -> String {
+        textarea_text(&self.fields[index])
+    }
+}
+
 #[derive(Clone)]
 pub struct RelatedPickerState {
     pub cursor: usize,
@@ -201,6 +261,7 @@ pub enum BrowserFilter {
     Search(String),
     Tag(String),
     Untagged,
+    Quantity { id: QuantityId, label: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,11 +289,15 @@ pub struct AppState {
     pub all_items: Vec<EquationSummary>,
     pub items: Vec<EquationSummary>,
     pub tag_counts: Vec<(String, usize)>,
+    pub quantities: Vec<(Quantity, usize)>,
     pub trash_items: Vec<TrashEntry>,
     pub trash_cursor: usize,
     pub tag_picker_cursor: usize,
     pub tag_picker_scroll_offset: usize,
     pub tag_picker_visible_height: u16,
+    pub quantity_cursor: usize,
+    pub quantity_scroll_offset: usize,
+    pub quantity_visible_height: u16,
     pub untagged_count: usize,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
@@ -250,6 +315,8 @@ pub struct AppState {
     pub status: String,
     pub selected: Option<Equation>,
     pub editor: Option<EditorState>,
+    pub quantity_form: Option<QuantityFormState>,
+    pub quantity_resolver: Option<QuantityResolverState>,
     pub cmdline: Option<CmdlineState>,
     pub preview_protocol: Option<StatefulProtocol>,
     pub preview_error: Option<String>,
@@ -307,11 +374,15 @@ impl AppState {
             all_items: Vec::new(),
             items: Vec::new(),
             tag_counts: Vec::new(),
+            quantities: Vec::new(),
             trash_items: Vec::new(),
             trash_cursor: 0,
             tag_picker_cursor: 0,
             tag_picker_scroll_offset: 0,
             tag_picker_visible_height: 0,
+            quantity_cursor: 0,
+            quantity_scroll_offset: 0,
+            quantity_visible_height: 0,
             untagged_count: 0,
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
@@ -329,6 +400,8 @@ impl AppState {
             status: "Ready".to_string(),
             selected: None,
             editor: None,
+            quantity_form: None,
+            quantity_resolver: None,
             cmdline: None,
             preview_protocol: None,
             preview_error: None,
@@ -367,6 +440,7 @@ impl AppState {
         let selected = self.selected_id();
         self.all_items = self.store.list()?;
         self.tag_counts = self.store.tag_counts()?;
+        self.quantities = self.store.quantities()?;
         self.untagged_count = self.store.untagged_count()?;
         self.refresh_items()?;
         if let Some(id) = selected
@@ -395,6 +469,7 @@ impl AppState {
             BrowserFilter::Search(query) => format!("Search: {}", query),
             BrowserFilter::Tag(tag) => format!("Tag: {tag}"),
             BrowserFilter::Untagged => "Untagged".to_string(),
+            BrowserFilter::Quantity { label, .. } => format!("Quantity: {label}"),
         }
     }
 
@@ -491,6 +566,7 @@ impl AppState {
             BrowserFilter::Search(query) => self.store.search(query)?,
             BrowserFilter::Tag(tag) => self.store.by_tag(tag)?,
             BrowserFilter::Untagged => self.store.untagged()?,
+            BrowserFilter::Quantity { id, .. } => self.store.by_quantity(*id)?,
         };
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
         self.list_scroll_offset = self.list_scroll_offset.min(self.cursor);
@@ -529,6 +605,21 @@ impl AppState {
             self.tag_picker_scroll_offset = self.tag_picker_cursor;
         } else if self.tag_picker_cursor >= self.tag_picker_scroll_offset + visible {
             self.tag_picker_scroll_offset = self.tag_picker_cursor + 1 - visible;
+        }
+    }
+
+    fn move_quantity_cursor_to(&mut self, cursor: usize) {
+        if self.quantities.is_empty() {
+            self.quantity_cursor = 0;
+            self.quantity_scroll_offset = 0;
+            return;
+        }
+        self.quantity_cursor = cursor.min(self.quantities.len() - 1);
+        let visible = list_visible_item_count(self.quantity_visible_height).max(1);
+        if self.quantity_cursor < self.quantity_scroll_offset {
+            self.quantity_scroll_offset = self.quantity_cursor;
+        } else if self.quantity_cursor >= self.quantity_scroll_offset + visible {
+            self.quantity_scroll_offset = self.quantity_cursor + 1 - visible;
         }
     }
 
@@ -642,7 +733,10 @@ impl AppState {
         use crossterm::event::KeyCode;
         let query = match &mut self.browser_filter {
             BrowserFilter::Search(query) => query,
-            BrowserFilter::None | BrowserFilter::Tag(_) | BrowserFilter::Untagged => {
+            BrowserFilter::None
+            | BrowserFilter::Tag(_)
+            | BrowserFilter::Untagged
+            | BrowserFilter::Quantity { .. } => {
                 return Ok(());
             }
         };
@@ -757,6 +851,14 @@ impl AppState {
                 self.status = format!("Tags: {} tag(s)", self.tag_counts.len());
                 Ok(())
             }
+            Action::OpenQuantities => {
+                self.quantities = self.store.quantities()?;
+                self.quantity_cursor = 0;
+                self.quantity_scroll_offset = 0;
+                self.mode = Mode::QuantityPicker;
+                self.status = format!("Quantities: {} item(s)", self.quantities.len());
+                Ok(())
+            }
             Action::OpenTrash => {
                 self.reload_trash()?;
                 self.trash_cursor = 0;
@@ -837,6 +939,60 @@ impl AppState {
                 Ok(())
             }
             Action::TagPickerCancel => {
+                self.mode = Mode::Browser;
+                self.schedule_selected();
+                Ok(())
+            }
+            Action::QuantityPickerMoveUp => {
+                self.move_quantity_cursor_to(self.quantity_cursor.saturating_sub(1));
+                Ok(())
+            }
+            Action::QuantityPickerMoveDown => {
+                self.move_quantity_cursor_to(self.quantity_cursor + 1);
+                Ok(())
+            }
+            Action::QuantityPickerMoveToTop => {
+                self.move_quantity_cursor_to(0);
+                Ok(())
+            }
+            Action::QuantityPickerMoveToBottom => {
+                self.move_quantity_cursor_to(self.quantities.len().saturating_sub(1));
+                Ok(())
+            }
+            Action::QuantityPickerApply => {
+                if let Some((quantity, _)) = self.quantities.get(self.quantity_cursor) {
+                    self.browser_filter = BrowserFilter::Quantity {
+                        id: quantity.id,
+                        label: quantity_label(quantity),
+                    };
+                    self.cursor = 0;
+                    self.refresh_items()?;
+                    self.status =
+                        format!("{}: {} match(es)", self.browser_title(), self.items.len());
+                    self.schedule_selected();
+                }
+                self.mode = Mode::Browser;
+                Ok(())
+            }
+            Action::QuantityPickerNew => {
+                self.quantity_form = Some(QuantityFormState::empty());
+                self.mode = Mode::QuantityForm;
+                Ok(())
+            }
+            Action::QuantityPickerEdit => {
+                if let Some((quantity, _)) = self.quantities.get(self.quantity_cursor) {
+                    self.quantity_form = Some(QuantityFormState::from_quantity(quantity));
+                    self.mode = Mode::QuantityForm;
+                }
+                Ok(())
+            }
+            Action::QuantityPickerDeleteRequest => {
+                if let Some((quantity, _)) = self.quantities.get(self.quantity_cursor) {
+                    self.mode = Mode::ConfirmRemoveQuantity(quantity.id);
+                }
+                Ok(())
+            }
+            Action::QuantityPickerCancel => {
                 self.mode = Mode::Browser;
                 self.schedule_selected();
                 Ok(())
@@ -935,6 +1091,24 @@ impl AppState {
                 self.mode = Mode::Trash;
                 Ok(())
             }
+            Action::ConfirmQuantityRemoveYes => {
+                if let Mode::ConfirmRemoveQuantity(id) = self.mode {
+                    self.store.delete_quantity(id)?;
+                    if matches!(self.browser_filter, BrowserFilter::Quantity { id: active, .. } if active == id)
+                    {
+                        self.browser_filter = BrowserFilter::None;
+                    }
+                    self.reload()?;
+                    self.move_quantity_cursor_to(self.quantity_cursor);
+                    self.mode = Mode::QuantityPicker;
+                    self.status = "Quantity deleted".to_string();
+                }
+                Ok(())
+            }
+            Action::ConfirmQuantityRemoveNo => {
+                self.mode = Mode::QuantityPicker;
+                Ok(())
+            }
             Action::ConfirmRelatedRemoveYes => {
                 if let Mode::ConfirmRemoveRelated(id) = self.mode {
                     self.remove_related_from_editor(id);
@@ -987,6 +1161,7 @@ impl AppState {
                 self.mode = match self.mode {
                     Mode::ConfirmDelete(_) => Mode::Browser,
                     Mode::ConfirmPurge(_) => Mode::Trash,
+                    Mode::ConfirmRemoveQuantity(_) => Mode::QuantityPicker,
                     Mode::ConfirmRemoveRelated(_) => Mode::Editor,
                     Mode::ConfirmRemoveReference(_) => Mode::Editor,
                     Mode::ConfirmRemoveVariable(_) => Mode::Editor,
@@ -1010,6 +1185,9 @@ impl AppState {
                     Mode::Search | Mode::Cmdline | Mode::Browser => Mode::Browser,
                     Mode::Trash => Mode::Browser,
                     Mode::TagPicker => Mode::Browser,
+                    Mode::QuantityPicker => Mode::Browser,
+                    Mode::QuantityForm => Mode::QuantityPicker,
+                    Mode::QuantityResolver => Mode::Editor,
                 };
                 self.schedule_selected();
                 Ok(())
@@ -1064,9 +1242,9 @@ impl AppState {
             Action::EditorRelatedMoveUp => {
                 if let Some(editor) = &mut self.editor {
                     match editor.focus {
-                        6 => editor.related_cursor = editor.related_cursor.saturating_sub(1),
-                        3 => editor.reference_cursor = editor.reference_cursor.saturating_sub(1),
-                        5 => editor.variable_cursor = editor.variable_cursor.saturating_sub(1),
+                        7 => editor.related_cursor = editor.related_cursor.saturating_sub(1),
+                        4 => editor.reference_cursor = editor.reference_cursor.saturating_sub(1),
+                        6 => editor.variable_cursor = editor.variable_cursor.saturating_sub(1),
                         focus => editor.fields[focus].move_cursor(CursorMove::Up),
                     }
                 }
@@ -1075,15 +1253,15 @@ impl AppState {
             Action::EditorRelatedMoveDown => {
                 if let Some(editor) = &mut self.editor {
                     match editor.focus {
-                        6 => {
+                        7 => {
                             let max = editor.related.len().saturating_sub(1);
                             editor.related_cursor = (editor.related_cursor + 1).min(max);
                         }
-                        3 => {
+                        4 => {
                             let max = editor.references.len().saturating_sub(1);
                             editor.reference_cursor = (editor.reference_cursor + 1).min(max);
                         }
-                        5 => {
+                        6 => {
                             let max = editor.variables.len().saturating_sub(1);
                             editor.variable_cursor = (editor.variable_cursor + 1).min(max);
                         }
@@ -1164,6 +1342,44 @@ impl AppState {
             }
             Action::VariableEditorInput(key) => {
                 self.input_variable_form(key);
+                Ok(())
+            }
+            Action::QuantityFormNextField => {
+                self.quantity_form_next_field();
+                Ok(())
+            }
+            Action::QuantityFormPrevField => {
+                self.quantity_form_prev_field();
+                Ok(())
+            }
+            Action::QuantityFormSave => {
+                self.save_quantity_form()?;
+                Ok(())
+            }
+            Action::QuantityFormCancel => {
+                self.quantity_form = None;
+                self.mode = Mode::QuantityPicker;
+                Ok(())
+            }
+            Action::QuantityFormInput(key) => {
+                self.input_quantity_form(key);
+                Ok(())
+            }
+            Action::ResolverMoveUp => {
+                self.move_resolver_cursor(false);
+                Ok(())
+            }
+            Action::ResolverMoveDown => {
+                self.move_resolver_cursor(true);
+                Ok(())
+            }
+            Action::ResolverAccept => self.accept_resolver(),
+            Action::ResolverSkip => {
+                self.advance_resolver();
+                Ok(())
+            }
+            Action::ResolverInput(key) => {
+                self.input_resolver(key);
                 Ok(())
             }
             Action::None => Ok(()),
@@ -1413,6 +1629,7 @@ impl AppState {
                 | Mode::ConfirmRemoveReference(_)
                 | Mode::VariableEditor
                 | Mode::ConfirmRemoveVariable(_)
+                | Mode::QuantityResolver
         );
         let latex = if in_editor {
             self.editor
@@ -1468,6 +1685,7 @@ impl AppState {
                 | Mode::ConfirmRemoveReference(_)
                 | Mode::VariableEditor
                 | Mode::ConfirmRemoveVariable(_)
+                | Mode::QuantityResolver
         );
         self.generation = self.generation.saturating_add(1);
         self.last_change = Instant::now();
@@ -1677,6 +1895,7 @@ impl AppState {
                 eq.name,
                 eq.description,
                 eq.latex,
+                eq.assumptions,
                 String::new(),
                 eq.tags.join(", "),
                 format_variables(&initial_variables),
@@ -1684,6 +1903,7 @@ impl AppState {
             ]
         } else {
             [
+                String::new(),
                 String::new(),
                 String::new(),
                 String::new(),
@@ -1737,77 +1957,90 @@ impl AppState {
         };
         let focused = editor.focus;
         match key.code {
-            KeyCode::Char('r') if focused == 6 => {
+            KeyCode::Char('r') if focused == 7 => {
                 self.open_related_picker();
                 return;
             }
-            KeyCode::Char('a') if focused == 3 => {
+            KeyCode::Char('a') if focused == 4 => {
                 self.open_reference_form(None);
                 return;
             }
-            KeyCode::Char('a') if focused == 5 => {
+            KeyCode::Char('a') if focused == 6 => {
                 self.open_variable_form(None);
                 return;
             }
-            KeyCode::Char('k') if focused == 3 => {
+            KeyCode::Char('k') if focused == 4 => {
                 editor.reference_cursor = editor.reference_cursor.saturating_sub(1);
                 return;
             }
-            KeyCode::Char('j') if focused == 3 => {
+            KeyCode::Char('j') if focused == 4 => {
                 let max = editor.references.len().saturating_sub(1);
                 editor.reference_cursor = (editor.reference_cursor + 1).min(max);
                 return;
             }
-            KeyCode::Char('d') if focused == 3 => {
+            KeyCode::Char('d') if focused == 4 => {
                 if let Some(idx) = self.current_reference_index() {
                     self.mode = Mode::ConfirmRemoveReference(idx);
                 }
                 return;
             }
-            KeyCode::Char('k') if focused == 5 => {
+            KeyCode::Char('k') if focused == 6 => {
                 editor.variable_cursor = editor.variable_cursor.saturating_sub(1);
                 return;
             }
-            KeyCode::Char('j') if focused == 5 => {
+            KeyCode::Char('j') if focused == 6 => {
                 let max = editor.variables.len().saturating_sub(1);
                 editor.variable_cursor = (editor.variable_cursor + 1).min(max);
                 return;
             }
-            KeyCode::Char('d') if focused == 5 => {
+            KeyCode::Char('d') if focused == 6 => {
                 if let Some(idx) = self.current_variable_index() {
                     self.mode = Mode::ConfirmRemoveVariable(idx);
                 }
                 return;
             }
-            KeyCode::Char('k') if focused == 6 => {
+            KeyCode::Char('c') if focused == 6 => {
+                self.link_variables_to_quantities();
+                return;
+            }
+            KeyCode::Char('u') if focused == 6 => {
+                if let Some(index) = self.current_variable_index()
+                    && let Some(editor) = &mut self.editor
+                {
+                    editor.variables[index].quantity_id = None;
+                    mark_editor_dirty(editor);
+                }
+                return;
+            }
+            KeyCode::Char('k') if focused == 7 => {
                 editor.related_cursor = editor.related_cursor.saturating_sub(1);
                 return;
             }
-            KeyCode::Char('j') if focused == 6 => {
+            KeyCode::Char('j') if focused == 7 => {
                 let max = editor.related.len().saturating_sub(1);
                 editor.related_cursor = (editor.related_cursor + 1).min(max);
                 return;
             }
-            KeyCode::Char('d') if focused == 6 => {
+            KeyCode::Char('d') if focused == 7 => {
                 if let Some(id) = self.current_related_id() {
                     self.mode = Mode::ConfirmRemoveRelated(id);
                 }
                 return;
             }
-            KeyCode::Enter if matches!(focused, 0 | 4) => return,
-            KeyCode::Enter if focused == 3 => {
+            KeyCode::Enter if matches!(focused, 0 | 5) => return,
+            KeyCode::Enter if focused == 4 => {
                 if let Some(idx) = self.current_reference_index() {
                     self.open_reference_form(Some(idx));
                 }
                 return;
             }
-            KeyCode::Enter if focused == 5 => {
+            KeyCode::Enter if focused == 6 => {
                 if let Some(idx) = self.current_variable_index() {
                     self.open_variable_form(Some(idx));
                 }
                 return;
             }
-            KeyCode::Enter if focused == 6 => {
+            KeyCode::Enter if focused == 7 => {
                 self.open_selected_related_detail();
                 return;
             }
@@ -1834,7 +2067,7 @@ impl AppState {
         let Some(editor) = &mut self.editor else {
             return;
         };
-        if editor.focus != 6 {
+        if editor.focus != 7 {
             return;
         }
         editor.related_picker.selected = editor.related.clone();
@@ -1855,7 +2088,7 @@ impl AppState {
 
     fn current_reference_index(&self) -> Option<usize> {
         let editor = self.editor.as_ref()?;
-        if editor.focus != 3 || editor.references.is_empty() {
+        if editor.focus != 4 || editor.references.is_empty() {
             return None;
         }
         Some(editor.reference_cursor.min(editor.references.len() - 1))
@@ -1985,7 +2218,7 @@ impl AppState {
 
     fn current_variable_index(&self) -> Option<usize> {
         let editor = self.editor.as_ref()?;
-        if editor.focus != 5 || editor.variables.is_empty() {
+        if editor.focus != 6 || editor.variables.is_empty() {
             return None;
         }
         Some(editor.variable_cursor.min(editor.variables.len() - 1))
@@ -2031,6 +2264,68 @@ impl AppState {
         }
     }
 
+    fn input_quantity_form(&mut self, key: crossterm::event::KeyEvent) {
+        if let Some(form) = &mut self.quantity_form {
+            let focus = form.focus;
+            form.fields[focus].input(key);
+            form.error = None;
+        }
+    }
+
+    fn quantity_form_next_field(&mut self) {
+        if let Some(form) = &mut self.quantity_form {
+            form.focus = (form.focus + 1) % form.fields.len();
+        }
+    }
+
+    fn quantity_form_prev_field(&mut self) {
+        if let Some(form) = &mut self.quantity_form {
+            form.focus = form.focus.checked_sub(1).unwrap_or(form.fields.len() - 1);
+        }
+    }
+
+    fn save_quantity_form(&mut self) -> anyhow::Result<()> {
+        let Some(form) = &mut self.quantity_form else {
+            return Ok(());
+        };
+        let symbol = form.field_text(0).trim().to_string();
+        if symbol.is_empty() {
+            form.error = Some("Enter a symbol".to_string());
+            return Ok(());
+        }
+        let mut quantity = form
+            .editing
+            .and_then(|id| {
+                self.quantities
+                    .iter()
+                    .find(|(quantity, _)| quantity.id == id)
+                    .map(|(quantity, _)| quantity.clone())
+            })
+            .unwrap_or_else(|| Quantity::new(symbol.clone()));
+        quantity.symbol = symbol;
+        quantity.name = form.field_text(1).trim().to_string();
+        quantity.description = form.field_text(2).trim().to_string();
+        quantity.units = form.field_text(3).trim().to_string();
+
+        if form.editing.is_some() {
+            self.store.update_quantity(&quantity)?;
+        } else {
+            self.store.insert_quantity(&quantity)?;
+        }
+        self.quantities = self.store.quantities()?;
+        if let Some(index) = self
+            .quantities
+            .iter()
+            .position(|(candidate, _)| candidate.id == quantity.id)
+        {
+            self.move_quantity_cursor_to(index);
+        }
+        self.quantity_form = None;
+        self.mode = Mode::QuantityPicker;
+        self.status = "Quantity saved".to_string();
+        Ok(())
+    }
+
     fn save_variable_form(&mut self) {
         let Some(editor) = &mut self.editor else {
             return;
@@ -2056,6 +2351,11 @@ impl AppState {
         let variable = Variable {
             symbol,
             description,
+            quantity_id: editor
+                .variable_form
+                .editing
+                .and_then(|i| editor.variables.get(i))
+                .and_then(|variable| variable.quantity_id),
         };
         let editing = editor.variable_form.editing;
         match editing {
@@ -2067,9 +2367,294 @@ impl AppState {
             None => editor.variables.len().saturating_sub(1),
         };
         let display = format_variables(&editor.variables);
-        editor.set_field_text(5, display);
+        editor.set_field_text(6, display);
         mark_editor_dirty(editor);
         self.mode = Mode::Editor;
+    }
+
+    pub fn link_variables_to_quantities(&mut self) {
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
+        if editor.focus != 6 {
+            return;
+        }
+        let known: HashSet<_> = self
+            .quantities
+            .iter()
+            .map(|(quantity, _)| quantity.id)
+            .collect();
+        let variables = editor
+            .variables
+            .iter()
+            .enumerate()
+            .filter(|(_, variable)| !variable.quantity_id.is_some_and(|id| known.contains(&id)))
+            .map(|(index, variable)| {
+                (
+                    index,
+                    variable.symbol.trim().to_string(),
+                    variable.description.clone(),
+                )
+            })
+            .filter(|(_, symbol, _)| !symbol.is_empty())
+            .collect::<Vec<_>>();
+
+        let mut links = Vec::new();
+        let mut queue = Vec::new();
+        let mut linked = 0;
+        let mut created = 0;
+        for (index, symbol, description) in variables {
+            match self.store.quantities_by_symbol(&symbol) {
+                Ok(matches) if matches.is_empty() => {
+                    let mut quantity = Quantity::new(symbol);
+                    quantity.description = description;
+                    if self.store.insert_quantity(&quantity).is_ok() {
+                        links.push((index, quantity.id));
+                        created += 1;
+                    }
+                }
+                Ok(matches) if matches.len() == 1 => {
+                    links.push((index, matches[0].id));
+                    linked += 1;
+                }
+                Ok(_) => queue.push(index),
+                Err(err) => {
+                    self.status = err.to_string();
+                    return;
+                }
+            }
+        }
+        if created > 0 {
+            match self.store.quantities() {
+                Ok(quantities) => self.quantities = quantities,
+                Err(err) => {
+                    self.status = err.to_string();
+                    return;
+                }
+            }
+        }
+        if let Some(editor) = &mut self.editor {
+            for (index, id) in links {
+                if let Some(variable) = editor.variables.get_mut(index) {
+                    variable.quantity_id = Some(id);
+                }
+            }
+            if linked > 0 || created > 0 {
+                mark_editor_dirty(editor);
+            }
+        }
+        if queue.is_empty() {
+            self.status = format!("Variables linked: {linked} linked, {created} created");
+            return;
+        }
+        let cursor = self.initial_resolver_cursor(queue[0]);
+        self.quantity_resolver = Some(QuantityResolverState {
+            queue,
+            position: 0,
+            query: String::new(),
+            query_cursor: 0,
+            cursor,
+            linked,
+            created,
+        });
+        self.mode = Mode::QuantityResolver;
+    }
+
+    pub fn resolver_rows(&self) -> Vec<ResolverRow> {
+        let Some(resolver) = &self.quantity_resolver else {
+            return Vec::new();
+        };
+        let Some(editor) = &self.editor else {
+            return Vec::new();
+        };
+        let Some(index) = resolver.queue.get(resolver.position).copied() else {
+            return Vec::new();
+        };
+        let Some(variable) = editor.variables.get(index) else {
+            return Vec::new();
+        };
+        let symbol = variable.symbol.trim();
+        let mut rows = vec![ResolverRow::CreateNew];
+        let exact = self
+            .quantities
+            .iter()
+            .filter(|(quantity, _)| quantity.symbol == symbol)
+            .map(|(quantity, _)| quantity.id)
+            .collect::<Vec<_>>();
+        rows.extend(exact.iter().copied().map(ResolverRow::Existing));
+        let exact: HashSet<_> = exact.into_iter().collect();
+        let query = resolver.query.trim().to_lowercase();
+        rows.extend(
+            self.quantities
+                .iter()
+                .filter(|(quantity, _)| !exact.contains(&quantity.id))
+                .filter(|(quantity, _)| {
+                    query.is_empty()
+                        || format!(
+                            "{} {} {}",
+                            quantity.symbol, quantity.name, quantity.description
+                        )
+                        .to_lowercase()
+                        .contains(&query)
+                })
+                .map(|(quantity, _)| ResolverRow::Existing(quantity.id)),
+        );
+        rows
+    }
+
+    fn initial_resolver_cursor(&self, variable_index: usize) -> usize {
+        let Some(editor) = &self.editor else {
+            return 0;
+        };
+        let Some(variable) = editor.variables.get(variable_index) else {
+            return 0;
+        };
+        if self
+            .quantities
+            .iter()
+            .any(|(quantity, _)| quantity.symbol == variable.symbol.trim())
+        {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn move_resolver_cursor(&mut self, down: bool) {
+        let max = self.resolver_rows().len().saturating_sub(1);
+        if let Some(resolver) = &mut self.quantity_resolver {
+            resolver.cursor = if down {
+                (resolver.cursor + 1).min(max)
+            } else {
+                resolver.cursor.saturating_sub(1)
+            };
+        }
+    }
+
+    fn input_resolver(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        let Some(resolver) = &mut self.quantity_resolver else {
+            return;
+        };
+        let mut changed = false;
+        match key.code {
+            KeyCode::Char(ch) => {
+                resolver.query.insert(resolver.query_cursor, ch);
+                resolver.query_cursor += ch.len_utf8();
+                changed = true;
+            }
+            KeyCode::Backspace if resolver.query_cursor > 0 => {
+                let previous = prev_boundary(&resolver.query, resolver.query_cursor);
+                resolver.query.drain(previous..resolver.query_cursor);
+                resolver.query_cursor = previous;
+                changed = true;
+            }
+            KeyCode::Delete if resolver.query_cursor < resolver.query.len() => {
+                let next = next_boundary(&resolver.query, resolver.query_cursor);
+                resolver.query.drain(resolver.query_cursor..next);
+                changed = true;
+            }
+            KeyCode::Left => {
+                resolver.query_cursor = prev_boundary(&resolver.query, resolver.query_cursor)
+            }
+            KeyCode::Right => {
+                resolver.query_cursor = next_boundary(&resolver.query, resolver.query_cursor)
+            }
+            KeyCode::Home => resolver.query_cursor = 0,
+            KeyCode::End => resolver.query_cursor = resolver.query.len(),
+            _ => {}
+        }
+        if changed {
+            let index = self
+                .quantity_resolver
+                .as_ref()
+                .and_then(|resolver| resolver.queue.get(resolver.position).copied());
+            let cursor = index
+                .map(|index| self.initial_resolver_cursor(index))
+                .unwrap_or(0);
+            let max = self.resolver_rows().len().saturating_sub(1);
+            if let Some(resolver) = &mut self.quantity_resolver {
+                resolver.cursor = cursor.min(max);
+            }
+        }
+    }
+
+    fn accept_resolver(&mut self) -> anyhow::Result<()> {
+        let row = self
+            .resolver_rows()
+            .get(
+                self.quantity_resolver
+                    .as_ref()
+                    .map(|resolver| resolver.cursor)
+                    .unwrap_or(0),
+            )
+            .cloned()
+            .unwrap_or(ResolverRow::CreateNew);
+        let Some((variable_index, symbol, description)) = self.current_resolver_variable() else {
+            return Ok(());
+        };
+        let quantity_id = match row {
+            ResolverRow::CreateNew => {
+                let mut quantity = Quantity::new(symbol);
+                quantity.description = description;
+                let id = quantity.id;
+                self.store.insert_quantity(&quantity)?;
+                self.quantities = self.store.quantities()?;
+                if let Some(resolver) = &mut self.quantity_resolver {
+                    resolver.created += 1;
+                }
+                id
+            }
+            ResolverRow::Existing(id) => {
+                if let Some(resolver) = &mut self.quantity_resolver {
+                    resolver.linked += 1;
+                }
+                id
+            }
+        };
+        if let Some(editor) = &mut self.editor
+            && let Some(variable) = editor.variables.get_mut(variable_index)
+        {
+            variable.quantity_id = Some(quantity_id);
+            mark_editor_dirty(editor);
+        }
+        self.advance_resolver();
+        Ok(())
+    }
+
+    fn current_resolver_variable(&self) -> Option<(usize, String, String)> {
+        let resolver = self.quantity_resolver.as_ref()?;
+        let editor = self.editor.as_ref()?;
+        let index = resolver.queue.get(resolver.position).copied()?;
+        let variable = editor.variables.get(index)?;
+        Some((
+            index,
+            variable.symbol.trim().to_string(),
+            variable.description.clone(),
+        ))
+    }
+
+    fn advance_resolver(&mut self) {
+        let Some(mut resolver) = self.quantity_resolver.take() else {
+            return;
+        };
+        resolver.position += 1;
+        if resolver.position >= resolver.queue.len() {
+            let skipped = resolver
+                .queue
+                .len()
+                .saturating_sub(resolver.linked + resolver.created);
+            self.mode = Mode::Editor;
+            self.status = format!(
+                "Variables linked: {} linked, {} created, {skipped} skipped",
+                resolver.linked, resolver.created
+            );
+            return;
+        }
+        resolver.query.clear();
+        resolver.query_cursor = 0;
+        resolver.cursor = self.initial_resolver_cursor(resolver.queue[resolver.position]);
+        self.quantity_resolver = Some(resolver);
     }
 
     fn remove_variable(&mut self, index: usize) {
@@ -2081,7 +2666,7 @@ impl AppState {
                 .variable_cursor
                 .min(editor.variables.len().saturating_sub(1));
             let display = format_variables(&editor.variables);
-            editor.set_field_text(5, display);
+            editor.set_field_text(6, display);
             mark_editor_dirty(editor);
         }
     }
@@ -2283,7 +2868,7 @@ impl AppState {
         };
         editor.related = editor.related_picker.selected.clone();
         let display = format_related(&editor.related, &self.all_items);
-        editor.set_field_text(6, display);
+        editor.set_field_text(7, display);
         editor.related_cursor = editor
             .related_cursor
             .min(editor.related.len().saturating_sub(1));
@@ -2300,7 +2885,7 @@ impl AppState {
             ),
             None => return,
         };
-        if focus != 6 {
+        if focus != 7 {
             return;
         }
         let Some(id) = id_opt else {
@@ -2315,7 +2900,7 @@ impl AppState {
 
     fn current_related_id(&self) -> Option<EquationId> {
         let editor = self.editor.as_ref()?;
-        if editor.focus != 6 {
+        if editor.focus != 7 {
             return None;
         }
         editor.related.get(editor.related_cursor).copied()
@@ -2327,7 +2912,7 @@ impl AppState {
         };
         editor.related.retain(|related_id| *related_id != id);
         let display = format_related(&editor.related, &self.all_items);
-        editor.set_field_text(6, display);
+        editor.set_field_text(7, display);
         editor.related_cursor = editor
             .related_cursor
             .min(editor.related.len().saturating_sub(1));
@@ -2345,6 +2930,7 @@ impl AppState {
         let source = self.store.get(source_id)?;
         let mut clone = Equation::new(format!("[clone] {}", source.name), source.latex.clone());
         clone.description = source.description;
+        clone.assumptions = source.assumptions;
         clone.references = source.references;
         clone.tags = source.tags;
         clone.variables = source.variables;
@@ -2402,7 +2988,7 @@ impl AppState {
 
     fn current_reference_target(&mut self) -> anyhow::Result<Option<String>> {
         if let Some(editor) = self.editor.as_ref()
-            && editor.focus == 3
+            && editor.focus == 4
         {
             let target = self
                 .current_reference_index()
@@ -2466,10 +3052,11 @@ impl AppState {
         equation.name = fields[0].trim().to_string();
         equation.description = fields[1].trim().to_string();
         equation.latex = fields[2].trim().to_string();
+        equation.assumptions = fields[3].trim().to_string();
         equation.references = references.clone();
         equation.tags = {
             let mut seen = std::collections::HashSet::new();
-            fields[4]
+            fields[5]
                 .split(',')
                 .map(str::trim)
                 .filter(|tag| !tag.is_empty())
@@ -2663,6 +3250,14 @@ fn format_variables(variables: &[Variable]) -> String {
         .join("\n")
 }
 
+pub fn quantity_label(quantity: &Quantity) -> String {
+    if quantity.name.trim().is_empty() {
+        quantity.symbol.clone()
+    } else {
+        format!("{} - {}", quantity.symbol, quantity.name)
+    }
+}
+
 fn format_related(related: &[EquationId], items: &[EquationSummary]) -> String {
     related
         .iter()
@@ -2673,7 +3268,7 @@ fn format_related(related: &[EquationId], items: &[EquationSummary]) -> String {
 }
 
 fn fields_signature(
-    fields: &[String; 7],
+    fields: &[String; 8],
     related: &[EquationId],
     references: &[Reference],
     variables: &[Variable],
@@ -2700,7 +3295,14 @@ fn fields_signature(
         .join(";");
     let variables_part = variables
         .iter()
-        .map(|v| format!("{}|{}", v.symbol, v.description))
+        .map(|v| {
+            format!(
+                "{}|{}|{}",
+                v.symbol,
+                v.description,
+                v.quantity_id.map(|id| id.to_string()).unwrap_or_default()
+            )
+        })
         .collect::<Vec<_>>()
         .join(";");
     format!(
@@ -2718,7 +3320,7 @@ fn mark_editor_dirty(editor: &mut EditorState) {
 }
 
 fn is_list_field(index: usize) -> bool {
-    matches!(index, 3 | 5 | 6)
+    matches!(index, 4 | 6 | 7)
 }
 
 fn related_picker_items_for(
@@ -2825,11 +3427,12 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     }
 }
 
-const COMMANDS: [&str; 7] = [
+const COMMANDS: [&str; 8] = [
     "delete",
     "exit",
     "new",
     "openReference",
+    "quantities",
     "search",
     "tags",
     "trash",
@@ -2865,6 +3468,7 @@ fn command_action(command: &str) -> Option<Action> {
         "exit" => Some(Action::Quit),
         "new" => Some(Action::NewEquation),
         "openReference" => Some(Action::OpenReference),
+        "quantities" => Some(Action::OpenQuantities),
         "search" => Some(Action::StartSearch),
         "tags" => Some(Action::OpenTags),
         "trash" => Some(Action::OpenTrash),
@@ -2941,7 +3545,7 @@ mod tests {
     use crate::event::map_key;
     use crate::graphics::{Graphics, TerminalCellSize};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use nullspace_core::{Equation, EquationId, EquationSummary};
+    use nullspace_core::{Equation, EquationId, EquationSummary, Quantity, Variable};
     use ratatui::layout::Size;
     use std::path::PathBuf;
 
@@ -2989,12 +3593,14 @@ mod tests {
                 "exit",
                 "new",
                 "openReference",
+                "quantities",
                 "search",
                 "tags",
                 "trash"
             ]
         );
         assert_eq!(command_matches("o"), ["openReference"]);
+        assert_eq!(command_matches("q"), ["quantities"]);
         assert_eq!(command_matches("s"), ["search"]);
         assert_eq!(command_matches("t"), ["tags", "trash"]);
         assert_eq!(command_matches("D"), ["delete"]);
@@ -3111,7 +3717,7 @@ mod tests {
             let editor = app.editor.as_mut().unwrap();
             editor.set_field_text(0, "Velocity".to_string());
             editor.set_field_text(2, "v = x/t".to_string());
-            editor.focus = 5;
+            editor.focus = 6;
         }
 
         app.open_variable_form(None);
@@ -3128,7 +3734,7 @@ mod tests {
             assert_eq!(editor.variables.len(), 1);
             assert_eq!(editor.variables[0].symbol, "v");
             assert_eq!(editor.variables[0].description, "velocity");
-            assert_eq!(editor.field_text(5), "v = velocity");
+            assert_eq!(editor.field_text(6), "v = velocity");
             editor.variables.clone()
         };
 
@@ -3244,6 +3850,108 @@ mod tests {
             super::BrowserFilter::Search("energy".to_string())
         );
         assert!(matches!(app.mode, super::Mode::Browser));
+    }
+
+    #[test]
+    fn auto_link_classifies_variables() {
+        let mut app = test_app();
+        let e = Quantity::new("E".to_string());
+        let mut g1 = Quantity::new("G".to_string());
+        g1.name = "full Green's function".to_string();
+        let mut g2 = Quantity::new("G".to_string());
+        g2.name = "imaginary-time Green's function".to_string();
+        app.store.insert_quantity(&e).unwrap();
+        app.store.insert_quantity(&g1).unwrap();
+        app.store.insert_quantity(&g2).unwrap();
+        app.reload().unwrap();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = 6;
+            editor.variables = vec![
+                Variable {
+                    symbol: "E".to_string(),
+                    description: "energy".to_string(),
+                    quantity_id: None,
+                },
+                Variable {
+                    symbol: "G".to_string(),
+                    description: "Green's function".to_string(),
+                    quantity_id: None,
+                },
+                Variable {
+                    symbol: "x".to_string(),
+                    description: "position".to_string(),
+                    quantity_id: None,
+                },
+            ];
+        }
+
+        app.link_variables_to_quantities();
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!(editor.variables[0].quantity_id, Some(e.id));
+        assert!(editor.variables[2].quantity_id.is_some());
+        assert_eq!(
+            app.store.quantities_by_symbol("x").unwrap()[0].description,
+            "position"
+        );
+        assert!(matches!(app.mode, super::Mode::QuantityResolver));
+        assert_eq!(app.quantity_resolver.as_ref().unwrap().queue, vec![1]);
+    }
+
+    #[test]
+    fn resolver_accept_links_candidate() {
+        let mut app = test_app();
+        let first = Quantity::new("G".to_string());
+        let second = Quantity::new("G".to_string());
+        app.store.insert_quantity(&first).unwrap();
+        app.store.insert_quantity(&second).unwrap();
+        app.reload().unwrap();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = 6;
+            editor.variables = vec![Variable {
+                symbol: "G".to_string(),
+                description: "Green's function".to_string(),
+                quantity_id: None,
+            }];
+        }
+        app.link_variables_to_quantities();
+
+        app.apply(Action::ResolverAccept);
+
+        let editor = app.editor.as_ref().unwrap();
+        assert!(
+            [first.id, second.id]
+                .into_iter()
+                .any(|id| editor.variables[0].quantity_id == Some(id))
+        );
+        assert!(editor.dirty);
+        assert!(matches!(app.mode, super::Mode::Editor));
+    }
+
+    #[test]
+    fn unlink_clears_quantity_id() {
+        let mut app = test_app();
+        let quantity = Quantity::new("E".to_string());
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = 6;
+            editor.variables = vec![Variable {
+                symbol: "E".to_string(),
+                description: "energy".to_string(),
+                quantity_id: Some(quantity.id),
+            }];
+        }
+
+        app.input_editor(key('u'));
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!(editor.variables[0].quantity_id, None);
+        assert!(editor.dirty);
     }
 
     #[test]

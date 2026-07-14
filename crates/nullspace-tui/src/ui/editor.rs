@@ -5,24 +5,27 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
+use std::collections::HashMap;
 
-use crate::app::{AppState, Mode, RelatedPickerFocus};
+use crate::app::{AppState, Mode, RelatedPickerFocus, ResolverRow};
 use crate::ui::widgets::{self, EquationListRow};
 
-const LABELS: [&str; 7] = [
+const LABELS: [&str; 8] = [
     "Name",
     "Description",
     "LaTeX",
+    "Assumptions",
     "References",
     "Tags",
     "Variables",
     "Related",
 ];
 
-const PLACEHOLDERS: [&str; 7] = [
+const PLACEHOLDERS: [&str; 8] = [
     "",
     "",
     "E = mc^2",
+    "non-relativistic limit, T << T_F",
     "",
     "physics, relativity",
     "E = energy\nm = mass\nc = speed of light",
@@ -32,7 +35,7 @@ const PLACEHOLDERS: [&str; 7] = [
 const MIN_TEXT_BOX_LINES: u16 = 1;
 const MAX_TEXT_BOX_LINES: u16 = 10;
 const BLOCK_CHROME_ROWS: u16 = 2;
-const MULTILINE_FIELDS: [usize; 2] = [1, 2];
+const MULTILINE_FIELDS: [usize; 3] = [1, 2, 3];
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
@@ -57,6 +60,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .is_some_and(|latex| app.preview_error.is_some() && app.preview_latex == latex);
     let cursor_visible = app.cursor_visible();
 
+    let quantity_names: HashMap<_, _> = app
+        .quantities
+        .iter()
+        .map(|(quantity, _)| (quantity.id, crate::app::quantity_label(quantity)))
+        .collect();
+
     if let Some(editor) = &mut app.editor {
         for (index, area) in rows.iter().enumerate() {
             let style = if editor.focus == index {
@@ -67,9 +76,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 Style::default()
             };
             let title = match index {
-                3 => "References (a add, enter edit, o open, d remove)",
-                5 => "Variables (a add, enter edit, d remove)",
-                6 => "Related (up/down select, enter open, r edit)",
+                4 => "References (a add, enter edit, o open, d remove)",
+                6 => "Variables (a add, enter edit, d remove, c link, u unlink)",
+                7 => "Related (up/down select, enter open, r edit)",
                 _ => LABELS[index],
             };
             let block = Block::default()
@@ -80,7 +89,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 } else {
                     style
                 });
-            if index == 3 {
+            if index == 4 {
                 render_reference_field(
                     frame,
                     *area,
@@ -90,7 +99,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 );
                 continue;
             }
-            if index == 6 {
+            if index == 7 {
                 render_related_field(
                     frame,
                     *area,
@@ -100,13 +109,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 );
                 continue;
             }
-            if index == 5 {
+            if index == 6 {
                 render_variable_field(
                     frame,
                     *area,
                     block,
                     &editor.variables,
                     editor.variable_cursor,
+                    &quantity_names,
                 );
                 continue;
             }
@@ -136,6 +146,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     if matches!(app.mode, Mode::VariableEditor) {
         draw_variable_editor(frame, app);
     }
+    if matches!(app.mode, Mode::QuantityResolver) {
+        draw_quantity_resolver(frame, app);
+    }
     if let Mode::ConfirmRemoveRelated(id) = app.mode {
         draw_remove_related_confirm(frame, app, id);
     }
@@ -154,6 +167,7 @@ fn default_row_constraints() -> Vec<Constraint> {
         Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
         Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
         Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
         Constraint::Length(3),
         Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
         Constraint::Min(3),
@@ -161,12 +175,12 @@ fn default_row_constraints() -> Vec<Constraint> {
 }
 
 fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<Constraint> {
-    (0..7)
+    (0..8)
         .map(|index| match index {
-            0 | 4 => Constraint::Length(3),
-            3 => Constraint::Length(reference_box_height(editor)),
-            5 => Constraint::Length(variable_box_height(editor)),
-            6 => Constraint::Min(3),
+            0 | 5 => Constraint::Length(3),
+            4 => Constraint::Length(reference_box_height(editor)),
+            6 => Constraint::Length(variable_box_height(editor)),
+            7 => Constraint::Min(3),
             _ if MULTILINE_FIELDS.contains(&index) => {
                 Constraint::Length(text_box_height(editor, index, width))
             }
@@ -357,6 +371,7 @@ fn render_variable_field(
     block: Block<'_>,
     variables: &[nullspace_core::Variable],
     cursor: usize,
+    quantity_names: &HashMap<nullspace_core::QuantityId, String>,
 ) {
     if variables.is_empty() {
         frame.render_widget(
@@ -376,7 +391,17 @@ fn render_variable_field(
             } else {
                 format!("{} = {}", variable.symbol, variable.description)
             };
-            ListItem::new(Line::from(text))
+            let mut spans = vec![ratatui::text::Span::raw(text)];
+            if let Some(label) = variable
+                .quantity_id
+                .and_then(|id| quantity_names.get(&id).cloned())
+            {
+                spans.push(ratatui::text::Span::styled(
+                    format!("  -> {label}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect::<Vec<_>>();
     let mut state = ListState::default();
@@ -492,6 +517,90 @@ fn draw_variable_editor(frame: &mut Frame<'_>, app: &mut AppState) {
         ),
     };
     frame.render_widget(Paragraph::new(hint), rows[2]);
+}
+
+fn draw_quantity_resolver(frame: &mut Frame<'_>, app: &mut AppState) {
+    let Some(resolver) = &app.quantity_resolver else {
+        return;
+    };
+    let Some(editor) = &app.editor else {
+        return;
+    };
+    let Some(variable_index) = resolver.queue.get(resolver.position).copied() else {
+        return;
+    };
+    let Some(variable) = editor.variables.get(variable_index) else {
+        return;
+    };
+    let area = centered_rect(70, 20, frame.area());
+    frame.render_widget(Clear, area);
+    let outer = Block::default()
+        .title(format!(
+            "Link variable '{}'  ({} of {})",
+            variable.symbol,
+            resolver.position + 1,
+            resolver.queue.len()
+        ))
+        .borders(Borders::ALL);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .split(inner);
+    widgets::search_box(
+        frame,
+        chunks[0],
+        widgets::SearchBox {
+            title: "Filter",
+            label: "Filter: ",
+            query: &resolver.query,
+            cursor: resolver.query_cursor,
+            hint: "enter choose  esc skip",
+            details: Vec::new(),
+            focused: true,
+        },
+    );
+    let rows = app.resolver_rows();
+    let items = rows
+        .iter()
+        .map(|row| match row {
+            ResolverRow::CreateNew => ListItem::new(Line::styled(
+                format!("Create new quantity '{}'", variable.symbol),
+                Style::default().fg(Color::Yellow),
+            )),
+            ResolverRow::Existing(id) => {
+                let quantity = app
+                    .quantities
+                    .iter()
+                    .find(|(quantity, _)| quantity.id == *id);
+                let label = quantity
+                    .map(|(quantity, _)| crate::app::quantity_label(quantity))
+                    .unwrap_or_else(|| "unknown quantity".to_string());
+                let detail = quantity
+                    .map(|(quantity, _)| {
+                        [quantity.units.as_str(), quantity.description.as_str()]
+                            .into_iter()
+                            .filter(|part| !part.trim().is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" - ")
+                    })
+                    .unwrap_or_default();
+                ListItem::new(vec![
+                    Line::styled(label, Style::default().add_modifier(Modifier::BOLD)),
+                    Line::styled(detail, Style::default().fg(Color::DarkGray)),
+                ])
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        state.select(Some(resolver.cursor.min(items.len() - 1)));
+    }
+    let list = List::new(items)
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, chunks[1], &mut state);
 }
 
 fn draw_remove_reference_confirm(frame: &mut Frame<'_>, app: &AppState, index: usize) {

@@ -56,7 +56,8 @@ make demo
 | `?` | Help (full keybinding reference) |
 | `q` / `Ctrl-C` | Quit |
 
-Search is broad by default and matches name, description, LaTeX, and tags.
+Search is broad by default and matches name, description, assumptions, LaTeX,
+and tags.
 Prefix the query to narrow it:
 
 | Prefix | Matches |
@@ -70,10 +71,12 @@ While searching, `Tab` switches focus between the query and the result list.
 
 `:` opens a command line with completion (`Tab` accepts, `↑`/`↓` select, `Enter`
 runs, `Esc` cancels). Commands: `delete`, `exit`, `new`, `openReference`,
-`search`, `tags`, `trash`.
+`quantities`, `search`, `tags`, `trash`.
 
 - `:tags` lists all tags (plus an *untagged* entry); `Enter` filters the browser
   by the chosen tag.
+- `:quantities` lists all quantities with symbol, name, units, and linked-equation
+  count; `Enter` filters by quantity, `n`/`e`/`d` manage them.
 - `:trash` shows deleted equations; `r` restores, `d` purges permanently.
 
 ### Editor
@@ -95,7 +98,12 @@ link. Existing libraries and JSON files using the old single-line reference form
 still import unchanged.
 
 In the **Variables** field: `a` to add a variable (symbol + description), `Enter`
-to edit the highlighted one, `d` to remove it.
+to edit the highlighted one, `d` to remove it, `c` to link all variables to
+global quantities (auto-creating unknown symbols and prompting on ambiguous
+ones), and `u` to unlink the highlighted variable.
+
+The **Assumptions** field is free text, for notes such as `non-relativistic
+limit, T << T_F`; broad search matches it.
 
 ### Related picker
 
@@ -103,7 +111,8 @@ Type to fuzzy-search, `Space` to toggle, `Enter` to apply, `Esc` to cancel.
 
 ## Import / export
 
-Equations can be exported to and imported from JSON.
+Libraries export as `{ "quantities": [...], "equations": [...] }`. Old bare
+equation-array JSON files still import.
 
 ```sh
 # Export the whole library

@@ -69,6 +69,7 @@ impl Store {
              WHERE lower(e.name)        LIKE ?1 ESCAPE '\\'
                 OR lower(e.description) LIKE ?1 ESCAPE '\\'
                 OR lower(e.latex)       LIKE ?1 ESCAPE '\\'
+                OR lower(e.assumptions) LIKE ?1 ESCAPE '\\'
                 OR lower(t.tag)         LIKE ?1 ESCAPE '\\'
              ORDER BY e.name COLLATE NOCASE",
         )?;
@@ -172,6 +173,110 @@ impl Store {
         collect_summaries(rows)
     }
 
+    pub fn quantities(&self) -> Result<Vec<(Quantity, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT q.id, q.symbol, q.name, q.description, q.units,
+                    COUNT(DISTINCT v.equation_id)
+             FROM quantities q
+             LEFT JOIN variables v ON v.quantity_id = q.id
+             GROUP BY q.id
+             ORDER BY q.symbol COLLATE NOCASE, q.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], quantity_with_count_from_row)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn quantities_by_symbol(&self, symbol: &str) -> Result<Vec<Quantity>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, symbol, name, description, units
+             FROM quantities
+             WHERE symbol = ?1
+             ORDER BY symbol COLLATE NOCASE, name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map(params![symbol], quantity_from_row)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_quantity(&mut self, quantity: &Quantity) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO quantities (id, symbol, name, description, units)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                quantity.id.to_string(),
+                quantity.symbol,
+                quantity.name,
+                quantity.description,
+                quantity.units
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_quantity(&mut self, quantity: &Quantity) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE quantities SET symbol=?2, name=?3, description=?4, units=?5 WHERE id=?1",
+            params![
+                quantity.id.to_string(),
+                quantity.symbol,
+                quantity.name,
+                quantity.description,
+                quantity.units
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound(quantity.id.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_quantity(&mut self, id: QuantityId) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let id = id.to_string();
+        tx.execute(
+            "UPDATE variables SET quantity_id = NULL WHERE quantity_id = ?1",
+            params![id],
+        )?;
+        let changed = tx.execute("DELETE FROM quantities WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(Error::NotFound(id));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn by_quantity(&self, id: QuantityId) -> Result<Vec<EquationSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT e.id, e.name, e.description, e.latex, e.px_height
+             FROM equations e
+             JOIN variables v ON v.equation_id = e.id
+             WHERE v.quantity_id = ?1
+             ORDER BY e.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map(params![id.to_string()], summary_from_row)?;
+        collect_summaries(rows)
+    }
+
+    pub fn import_quantities(&mut self, quantities: &[Quantity]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        for quantity in quantities {
+            tx.execute(
+                "INSERT OR REPLACE INTO quantities (id, symbol, name, description, units)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    quantity.id.to_string(),
+                    quantity.symbol,
+                    quantity.name,
+                    quantity.description,
+                    quantity.units
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(quantities.len())
+    }
+
     pub fn all(&self) -> Result<Vec<Equation>> {
         self.list()?
             .into_iter()
@@ -248,7 +353,7 @@ impl Store {
         let mut eq = self
             .conn
             .query_row(
-                "SELECT id, name, description, latex, px_height, created_at, updated_at FROM equations WHERE id=?1",
+                "SELECT id, name, description, latex, px_height, assumptions, created_at, updated_at FROM equations WHERE id=?1",
                 params![id_s],
                 |row| {
                     let raw_id: String = row.get(0)?;
@@ -258,12 +363,13 @@ impl Store {
                         description: row.get(2)?,
                         latex: row.get(3)?,
                         px_height: row.get::<_, i64>(4)? as u32,
+                        assumptions: row.get(5)?,
                         references: Vec::new(),
                         tags: Vec::new(),
                         variables: Vec::new(),
                         related: Vec::new(),
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
+                        created_at: row.get(6)?,
+                        updated_at: row.get(7)?,
                     })
                 },
             )
@@ -297,7 +403,7 @@ impl Store {
         let tx = self.conn.transaction()?;
         let latex_norm = equation_identity(&eq.latex);
         let changed = tx.execute(
-            "UPDATE equations SET name=?2, description=?3, latex=?4, latex_norm=?5, px_height=?6, created_at=?7, updated_at=?8 WHERE id=?1",
+            "UPDATE equations SET name=?2, description=?3, latex=?4, latex_norm=?5, px_height=?6, assumptions=?7, created_at=?8, updated_at=?9 WHERE id=?1",
             params![
                 eq.id.to_string(),
                 eq.name,
@@ -305,6 +411,7 @@ impl Store {
                 eq.latex,
                 latex_norm,
                 eq.px_height as i64,
+                eq.assumptions,
                 eq.created_at,
                 eq.updated_at
             ],
@@ -423,12 +530,16 @@ impl Store {
 
     fn load_variables(&self, id: &str) -> Result<Vec<Variable>> {
         let mut stmt = self.conn.prepare(
-            "SELECT symbol, description FROM variables WHERE equation_id=?1 ORDER BY position",
+            "SELECT symbol, description, quantity_id FROM variables WHERE equation_id=?1 ORDER BY position",
         )?;
         let rows = stmt.query_map(params![id], |row| {
+            let quantity_id = row
+                .get::<_, Option<String>>(2)?
+                .and_then(|raw| QuantityId::parse(&raw));
             Ok(Variable {
                 symbol: row.get(0)?,
                 description: row.get(1)?,
+                quantity_id,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -500,7 +611,7 @@ fn insert_equation_row(
 ) -> Result<()> {
     let latex_norm = equation_identity(&eq.latex);
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at, allow_duplicate_latex) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, assumptions, created_at, updated_at, allow_duplicate_latex) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             eq.id.to_string(),
             eq.name,
@@ -508,6 +619,7 @@ fn insert_equation_row(
             eq.latex,
             latex_norm,
             eq.px_height as i64,
+            eq.assumptions,
             eq.created_at,
             eq.updated_at,
             allow_duplicate_latex as i64,
@@ -520,14 +632,15 @@ fn insert_equation_row(
 fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
     let latex_norm = equation_identity(&eq.latex);
     conn.execute(
-        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "INSERT INTO equations (id, name, description, latex, latex_norm, px_height, assumptions, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             description=excluded.description,
             latex=excluded.latex,
             latex_norm=excluded.latex_norm,
             px_height=excluded.px_height,
+            assumptions=excluded.assumptions,
             created_at=excluded.created_at,
             updated_at=excluded.updated_at",
         params![
@@ -537,6 +650,7 @@ fn upsert_equation_row(conn: &Connection, eq: &Equation) -> Result<()> {
             eq.latex,
             latex_norm,
             eq.px_height as i64,
+            eq.assumptions,
             eq.created_at,
             eq.updated_at
         ],
@@ -602,8 +716,15 @@ fn insert_children(conn: &Connection, eq: &Equation) -> Result<()> {
     let id = eq.id.to_string();
     for (position, variable) in eq.variables.iter().enumerate() {
         conn.execute(
-            "INSERT OR IGNORE INTO variables (equation_id, symbol, description, position) VALUES (?1, ?2, ?3, ?4)",
-            params![id, variable.symbol, variable.description, position as i64],
+            "INSERT OR IGNORE INTO variables (equation_id, symbol, description, position, quantity_id)
+             VALUES (?1, ?2, ?3, ?4, (SELECT id FROM quantities WHERE id = ?5))",
+            params![
+                id,
+                variable.symbol,
+                variable.description,
+                position as i64,
+                variable.quantity_id.map(|id| id.to_string())
+            ],
         )?;
     }
     for tag in &eq.tags {
@@ -673,6 +794,27 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<EquationSummary> {
     })
 }
 
+fn quantity_from_row(row: &Row<'_>) -> rusqlite::Result<Quantity> {
+    let id: String = row.get(0)?;
+    Ok(Quantity {
+        id: QuantityId::parse(&id).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(crate::error::Error::NotFound(format!("invalid uuid: {id}"))),
+            )
+        })?,
+        symbol: row.get(1)?,
+        name: row.get(2)?,
+        description: row.get(3)?,
+        units: row.get(4)?,
+    })
+}
+
+fn quantity_with_count_from_row(row: &Row<'_>) -> rusqlite::Result<(Quantity, usize)> {
+    Ok((quantity_from_row(row)?, row.get::<_, i64>(5)? as usize))
+}
+
 fn like_escape(input: &str) -> String {
     input
         .replace('\\', "\\\\")
@@ -713,10 +855,12 @@ mod tests {
             Variable {
                 symbol: "E".to_string(),
                 description: "energy".to_string(),
+                quantity_id: None,
             },
             Variable {
                 symbol: "m".to_string(),
                 description: "mass".to_string(),
+                quantity_id: None,
             },
         ];
         eq.tags = vec!["physics".to_string(), "relativity".to_string()];
@@ -849,6 +993,7 @@ mod tests {
         area.variables = vec![Variable {
             symbol: "A".to_string(),
             description: "area".to_string(),
+            quantity_id: None,
         }];
         store.insert(&energy).unwrap();
         store.insert(&area).unwrap();
@@ -978,6 +1123,7 @@ mod tests {
         area.variables = vec![Variable {
             symbol: "A".to_string(),
             description: "area".to_string(),
+            quantity_id: None,
         }];
         store.insert(&energy).unwrap();
         store.insert(&area).unwrap();
@@ -985,6 +1131,97 @@ mod tests {
         let matches = store.by_symbol("E").unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].name, "Energy");
+    }
+
+    #[test]
+    fn quantity_crud_roundtrip() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut quantity = Quantity::new("E".to_string());
+        quantity.name = "energy".to_string();
+        quantity.units = "SI: J".to_string();
+
+        store.insert_quantity(&quantity).unwrap();
+        assert_eq!(store.quantities().unwrap(), vec![(quantity.clone(), 0)]);
+
+        quantity.description = "total energy".to_string();
+        store.update_quantity(&quantity).unwrap();
+        assert_eq!(store.quantities().unwrap()[0].0.description, "total energy");
+
+        store.delete_quantity(quantity.id).unwrap();
+        assert!(store.quantities().unwrap().is_empty());
+    }
+
+    #[test]
+    fn variable_quantity_link_roundtrips() {
+        let mut store = Store::open_in_memory().unwrap();
+        let quantity = Quantity::new("E".to_string());
+        store.insert_quantity(&quantity).unwrap();
+        let mut eq = full_equation("Energy");
+        eq.variables[0].quantity_id = Some(quantity.id);
+        store.insert(&eq).unwrap();
+
+        assert_eq!(
+            store.get(eq.id).unwrap().variables[0].quantity_id,
+            Some(quantity.id)
+        );
+        assert_eq!(store.by_quantity(quantity.id).unwrap()[0].id, eq.id);
+        assert_eq!(store.quantities().unwrap()[0].1, 1);
+    }
+
+    #[test]
+    fn delete_quantity_unlinks_variables() {
+        let mut store = Store::open_in_memory().unwrap();
+        let quantity = Quantity::new("E".to_string());
+        store.insert_quantity(&quantity).unwrap();
+        let mut eq = full_equation("Energy");
+        eq.variables[0].quantity_id = Some(quantity.id);
+        store.insert(&eq).unwrap();
+
+        store.delete_quantity(quantity.id).unwrap();
+
+        assert_eq!(store.get(eq.id).unwrap().variables[0].quantity_id, None);
+    }
+
+    #[test]
+    fn dangling_quantity_id_inserts_as_null() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut eq = full_equation("Energy");
+        eq.variables[0].quantity_id = Some(QuantityId::new());
+
+        store.insert(&eq).unwrap();
+
+        assert_eq!(store.get(eq.id).unwrap().variables[0].quantity_id, None);
+    }
+
+    #[test]
+    fn quantities_by_symbol_is_case_sensitive() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .insert_quantity(&Quantity::new("E".to_string()))
+            .unwrap();
+        store
+            .insert_quantity(&Quantity::new("e".to_string()))
+            .unwrap();
+
+        let matches = store.quantities_by_symbol("E").unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].symbol, "E");
+    }
+
+    #[test]
+    fn assumptions_roundtrip() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut eq = full_equation("Energy");
+        eq.assumptions = "T ≪ T_F".to_string();
+        store.insert(&eq).unwrap();
+
+        assert_eq!(store.get(eq.id).unwrap().assumptions, "T ≪ T_F");
+        assert_eq!(store.search("T ≪ T_F").unwrap()[0].id, eq.id);
+
+        eq.assumptions = "non-relativistic".to_string();
+        store.update(&eq).unwrap();
+        assert_eq!(store.get(eq.id).unwrap().assumptions, "non-relativistic");
     }
 
     #[test]
@@ -1016,6 +1253,7 @@ mod tests {
         eq.variables = vec![Variable {
             symbol: "c".to_string(),
             description: "speed of light".to_string(),
+            quantity_id: None,
         }];
         eq.tags = vec!["updated".to_string()];
         eq.references.clear();
@@ -1509,7 +1747,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table_count, 1);
-        assert_eq!(user_version, 6);
+        assert_eq!(user_version, 7);
     }
 
     #[test]
@@ -1544,6 +1782,6 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert!(pages_exists);
-        assert_eq!(user_version, 6);
+        assert_eq!(user_version, 7);
     }
 }

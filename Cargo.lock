@@ -1399,6 +1399,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "rayon",
+ "serde",
  "serde_json",
  "tui-textarea-2",
 ]

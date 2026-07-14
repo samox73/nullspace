@@ -15,7 +15,7 @@ use std::time::Duration;
 use anyhow::Context;
 use app::AppState;
 use crossterm::event as ct_event;
-use nullspace_core::{DuplicatePolicy, Equation, Store};
+use nullspace_core::{DuplicatePolicy, Equation, Quantity, Store};
 
 fn main() -> anyhow::Result<()> {
     let default_hook = std::panic::take_hook();
@@ -108,13 +108,37 @@ fn parse_duplicate_policy(raw: &str) -> anyhow::Result<DuplicatePolicy> {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ExportFile {
+    #[serde(default)]
+    quantities: Vec<Quantity>,
+    equations: Vec<Equation>,
+}
+
+fn parse_import(raw: &str) -> anyhow::Result<(Vec<Quantity>, Vec<Equation>)> {
+    if let Ok(file) = serde_json::from_str::<ExportFile>(raw) {
+        return Ok((file.quantities, file.equations));
+    }
+    let equations: Vec<Equation> = serde_json::from_str(raw)?;
+    Ok((Vec::new(), equations))
+}
+
 fn export_json(db_path: &std::path::Path, output_path: &std::path::Path) -> anyhow::Result<()> {
     let store = Store::open(db_path)?;
+    let quantities = store
+        .quantities()?
+        .into_iter()
+        .map(|(quantity, _)| quantity)
+        .collect::<Vec<_>>();
     let equations = store.all()?;
-    let json = serde_json::to_string_pretty(&equations)?;
+    let json = serde_json::to_string_pretty(&ExportFile {
+        quantities: quantities.clone(),
+        equations: equations.clone(),
+    })?;
     std::fs::write(output_path, json)?;
     println!(
-        "exported {} equation(s) to {}",
+        "exported {} quantity(s), {} equation(s) to {}",
+        quantities.len(),
         equations.len(),
         output_path.display()
     );
@@ -127,11 +151,13 @@ fn import_json(
     policy: DuplicatePolicy,
 ) -> anyhow::Result<()> {
     let raw = std::fs::read_to_string(input_path)?;
-    let equations: Vec<Equation> = serde_json::from_str(&raw)?;
+    let (quantities, equations) = parse_import(&raw)?;
     let mut store = Store::open(db_path)?;
+    let quantity_count = store.import_quantities(&quantities)?;
     let summary = store.import_equations(&equations, policy)?;
     println!(
-        "imported {} new, updated {}, skipped {} duplicate(s) from {}",
+        "imported {} quantity(s), {} new, updated {}, skipped {} duplicate(s) from {}",
+        quantity_count,
         summary.inserted,
         summary.updated,
         summary.skipped,
@@ -181,4 +207,45 @@ fn db_path() -> anyhow::Result<PathBuf> {
     let dir = project_dirs.data_dir();
     std::fs::create_dir_all(dir)?;
     Ok(dir.join("nullspace.sqlite3"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_import;
+    use nullspace_core::{Equation, Quantity, Variable};
+
+    #[test]
+    fn parse_import_accepts_legacy_array() {
+        let equation = Equation::new("Energy".to_string(), "E=mc^2".to_string());
+        let raw = serde_json::to_string(&vec![equation]).unwrap();
+
+        let (quantities, equations) = parse_import(&raw).unwrap();
+
+        assert!(quantities.is_empty());
+        assert_eq!(equations.len(), 1);
+    }
+
+    #[test]
+    fn parse_import_accepts_export_file_object() {
+        let quantity = Quantity::new("E".to_string());
+        let mut equation = Equation::new("Energy".to_string(), "E=mc^2".to_string());
+        equation.variables = vec![Variable {
+            symbol: "E".to_string(),
+            description: "energy".to_string(),
+            quantity_id: Some(quantity.id),
+        }];
+        let raw = serde_json::json!({
+            "quantities": [quantity],
+            "equations": [equation],
+        })
+        .to_string();
+
+        let (quantities, equations) = parse_import(&raw).unwrap();
+
+        assert_eq!(quantities.len(), 1);
+        assert_eq!(
+            equations[0].variables[0].quantity_id,
+            Some(quantities[0].id)
+        );
+    }
 }

@@ -79,9 +79,10 @@ fn search_and_list_areas(area: Rect, app: &AppState) -> (Option<Rect>, Rect) {
 
     let rows = match &app.browser_filter {
         BrowserFilter::Search(query) => search_box_rows(query, &app.tag_counts),
-        BrowserFilter::None | BrowserFilter::Tag(_) | BrowserFilter::Untagged => {
-            SEARCH_BOX_BASE_ROWS
-        }
+        BrowserFilter::None
+        | BrowserFilter::Tag(_)
+        | BrowserFilter::Untagged
+        | BrowserFilter::Quantity { .. } => SEARCH_BOX_BASE_ROWS,
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -93,7 +94,10 @@ fn search_and_list_areas(area: Rect, app: &AppState) -> (Option<Rect>, Rect) {
 fn draw_filter_prompt(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let (title, label, query) = match &app.browser_filter {
         BrowserFilter::Search(query) => ("Search (tag: var:)", "Query: ", query.as_str()),
-        BrowserFilter::None | BrowserFilter::Tag(_) | BrowserFilter::Untagged => return,
+        BrowserFilter::None
+        | BrowserFilter::Tag(_)
+        | BrowserFilter::Untagged
+        | BrowserFilter::Quantity { .. } => return,
     };
     widgets::search_box(
         frame,
