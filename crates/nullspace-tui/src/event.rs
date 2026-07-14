@@ -1,5 +1,5 @@
 use crate::action::Action;
-use crate::app::{AppState, BrowserFilterFocus, EditorField, Mode};
+use crate::app::{AppState, BrowserFilter, BrowserFilterFocus, Mode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
@@ -20,6 +20,9 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Char(':') => Action::OpenCmdline,
             KeyCode::Char('/') => Action::StartSearch,
+            KeyCode::Esc if matches!(app.browser_filter, BrowserFilter::Quantity { .. }) => {
+                Action::Back
+            }
             KeyCode::Esc => Action::ClearFilter,
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
@@ -118,6 +121,7 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             _ => Action::None,
         },
         Mode::QuantityPicker => match key.code {
+            KeyCode::Char(':') => Action::OpenCmdline,
             KeyCode::Char('j') | KeyCode::Down => Action::QuantityPickerMoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::QuantityPickerMoveUp,
             KeyCode::Char('g') if app.vim_go_prefix => Action::QuantityPickerMoveToTop,
@@ -127,7 +131,8 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             KeyCode::Char('n') => Action::QuantityPickerNew,
             KeyCode::Char('e') => Action::QuantityPickerEdit,
             KeyCode::Char('d') => Action::QuantityPickerDeleteRequest,
-            KeyCode::Esc | KeyCode::Char('q') => Action::QuantityPickerCancel,
+            KeyCode::Esc => Action::QuantityPickerBack,
+            KeyCode::Char('q') => Action::Quit,
             _ => Action::None,
         },
         Mode::ConfirmPurge(_) => match key.code {
@@ -181,24 +186,24 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
                 return Action::EditorSave;
             }
+            let active = app.editor.as_ref().is_some_and(|editor| editor.active);
+            if !active {
+                return match key.code {
+                    KeyCode::Esc => Action::Back,
+                    KeyCode::Enter => Action::EditorActivateField,
+                    KeyCode::Char('j') | KeyCode::Down => Action::EditorNextField,
+                    KeyCode::Char('k') | KeyCode::Up => Action::EditorPrevField,
+                    _ => Action::None,
+                };
+            }
             match key.code {
-                KeyCode::Esc => Action::Back,
-                KeyCode::Tab => Action::EditorNextField,
-                KeyCode::BackTab => Action::EditorPrevField,
+                KeyCode::Esc => Action::EditorDeactivateField,
                 KeyCode::Up => Action::EditorRelatedMoveUp,
                 KeyCode::Down => Action::EditorRelatedMoveDown,
                 KeyCode::Left => Action::EditorMoveLeft,
                 KeyCode::Right => Action::EditorMoveRight,
                 KeyCode::Home => Action::EditorHome,
                 KeyCode::End => Action::EditorEnd,
-                KeyCode::Char('o')
-                    if app
-                        .editor
-                        .as_ref()
-                        .is_some_and(|editor| editor.focus == EditorField::References) =>
-                {
-                    Action::OpenReference
-                }
                 _ => Action::EditorInput(key),
             }
         }

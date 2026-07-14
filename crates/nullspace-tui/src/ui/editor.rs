@@ -72,10 +72,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
 
     if let Some(editor) = &mut app.editor {
         for (field, area) in EditorField::ALL.into_iter().zip(rows.iter()) {
-            let style = if editor.focus == field {
+            let selected = editor.focus == field;
+            let active = selected && editor.active;
+            let style = if active {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Green)
                     .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default().fg(Color::Yellow)
             } else {
                 Style::default()
             };
@@ -94,6 +98,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                     block,
                     &editor.references,
                     editor.reference_cursor,
+                    active,
                 ),
                 EditorField::Related => render_related_field(
                     frame,
@@ -101,6 +106,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                     block,
                     &editor.field_text(field),
                     editor.related_cursor,
+                    active,
                 ),
                 EditorField::Variables => render_variable_field(
                     frame,
@@ -109,6 +115,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                     &editor.variables,
                     editor.variable_cursor,
                     &quantity_names,
+                    active,
                 ),
                 EditorField::Name
                 | EditorField::Description
@@ -116,11 +123,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
                 | EditorField::Assumptions
                 | EditorField::Tags => {
                     let placeholder = field_placeholder(field);
-                    let focused = editor.focus;
                     let textarea = editor.field_mut(field);
                     textarea.set_block(block);
                     textarea.set_cursor_line_style(Style::default());
-                    textarea.set_cursor_style(if field == focused && cursor_visible {
+                    textarea.set_cursor_style(if active && cursor_visible {
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
@@ -326,6 +332,7 @@ fn render_reference_field(
     block: Block<'_>,
     references: &[nullspace_core::Reference],
     cursor: usize,
+    active: bool,
 ) {
     if references.is_empty() {
         frame.render_widget(
@@ -358,7 +365,9 @@ fn render_reference_field(
         })
         .collect::<Vec<_>>();
     let mut state = ListState::default();
-    state.select(Some(cursor.min(items.len().saturating_sub(1))));
+    if active {
+        state.select(Some(cursor.min(items.len().saturating_sub(1))));
+    }
     let list = List::new(items)
         .block(block)
         .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
@@ -373,6 +382,7 @@ fn render_variable_field(
     variables: &[nullspace_core::Variable],
     cursor: usize,
     quantity_names: &HashMap<nullspace_core::QuantityId, String>,
+    active: bool,
 ) {
     if variables.is_empty() {
         frame.render_widget(
@@ -406,7 +416,9 @@ fn render_variable_field(
         })
         .collect::<Vec<_>>();
     let mut state = ListState::default();
-    state.select(Some(cursor.min(items.len().saturating_sub(1))));
+    if active {
+        state.select(Some(cursor.min(items.len().saturating_sub(1))));
+    }
     let list = List::new(items)
         .block(block)
         .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
@@ -644,6 +656,7 @@ fn render_related_field(
     block: Block<'_>,
     value: &str,
     cursor: usize,
+    active: bool,
 ) {
     let names = related_names(value);
     if names.is_empty() {
@@ -660,7 +673,9 @@ fn render_related_field(
             .map(|name| ListItem::new(Line::from(name.clone())))
             .collect::<Vec<_>>();
         let mut state = ListState::default();
-        state.select(Some(cursor.min(items.len().saturating_sub(1))));
+        if active {
+            state.select(Some(cursor.min(items.len().saturating_sub(1))));
+        }
         let list = List::new(items)
             .block(block)
             .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))

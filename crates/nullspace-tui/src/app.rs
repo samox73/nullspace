@@ -130,6 +130,7 @@ pub struct EditorState {
     pub editing: Option<EquationId>,
     pub fields: [TextArea<'static>; EditorField::COUNT],
     pub focus: EditorField,
+    pub active: bool,
     pub related_cursor: usize,
     pub reference_cursor: usize,
     pub variable_cursor: usize,
@@ -332,10 +333,21 @@ pub enum BrowserFilterFocus {
 }
 
 #[derive(Clone)]
+pub enum QuantityPickerBackTarget {
+    None,
+    ReturnTo(Mode),
+    ReturnToEditor {
+        filter: BrowserFilter,
+        selected: Option<EquationId>,
+    },
+}
+
+#[derive(Clone)]
 pub struct CmdlineState {
     pub input: String,
     pub cursor: usize,
     pub selected: usize,
+    pub return_mode: Mode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -359,6 +371,7 @@ pub struct AppState {
     pub quantity_cursor: usize,
     pub quantity_scroll_offset: usize,
     pub quantity_visible_height: u16,
+    pub quantity_picker_back: QuantityPickerBackTarget,
     pub untagged_count: usize,
     pub browser_filter: BrowserFilter,
     pub browser_filter_cursor: usize,
@@ -472,6 +485,7 @@ impl AppState {
             quantity_cursor: 0,
             quantity_scroll_offset: 0,
             quantity_visible_height: 0,
+            quantity_picker_back: QuantityPickerBackTarget::None,
             untagged_count: 0,
             browser_filter: BrowserFilter::None,
             browser_filter_cursor: 0,
@@ -783,6 +797,11 @@ impl AppState {
     }
 
     fn execute_cmdline(&mut self) {
+        let return_mode = self
+            .cmdline
+            .as_ref()
+            .map(|cmdline| cmdline.return_mode)
+            .unwrap_or(Mode::Browser);
         let input = self
             .cmdline
             .as_ref()
@@ -796,7 +815,7 @@ impl AppState {
         let command = exact_command(&input).or_else(|| selected_command(&input, selected));
 
         self.cmdline = None;
-        self.mode = Mode::Browser;
+        self.mode = return_mode;
         self.force_preview_redraw();
 
         match command.and_then(command_action) {
@@ -933,6 +952,11 @@ impl AppState {
             Action::CopyCurrent => self.copy_current_equation(),
             Action::CopyLatexToClipboard => self.copy_selected_latex_to_clipboard(),
             Action::OpenReference => self.open_reference(),
+            Action::OpenEquations => {
+                self.clear_browser_filter()?;
+                self.mode = Mode::Browser;
+                Ok(())
+            }
             Action::OpenTags => {
                 self.tag_picker_cursor = 0;
                 self.tag_picker_scroll_offset = 0;
@@ -944,6 +968,7 @@ impl AppState {
                 self.quantities = self.store.quantities()?;
                 self.quantity_cursor = 0;
                 self.quantity_scroll_offset = 0;
+                self.quantity_picker_back = QuantityPickerBackTarget::ReturnTo(self.mode);
                 self.mode = Mode::QuantityPicker;
                 self.status = format!("Quantities: {} item(s)", self.quantities.len());
                 Ok(())
@@ -1050,15 +1075,7 @@ impl AppState {
             }
             Action::QuantityPickerApply => {
                 if let Some((quantity, _)) = self.quantities.get(self.quantity_cursor) {
-                    self.browser_filter = BrowserFilter::Quantity {
-                        id: quantity.id,
-                        label: quantity_label(quantity),
-                    };
-                    self.cursor = 0;
-                    self.refresh_items()?;
-                    self.status =
-                        format!("{}: {} match(es)", self.browser_title(), self.items.len());
-                    self.schedule_selected();
+                    self.open_quantity_equations(quantity.id, quantity_label(quantity))?;
                 }
                 self.mode = Mode::Browser;
                 Ok(())
@@ -1081,11 +1098,7 @@ impl AppState {
                 }
                 Ok(())
             }
-            Action::QuantityPickerCancel => {
-                self.mode = Mode::Browser;
-                self.schedule_selected();
-                Ok(())
-            }
+            Action::QuantityPickerBack => self.close_quantity_picker(),
             Action::DeleteRequest => {
                 if let Some(id) = self.selected_id() {
                     self.mode = Mode::ConfirmDelete(id);
@@ -1097,6 +1110,7 @@ impl AppState {
                     input: String::new(),
                     cursor: 0,
                     selected: 0,
+                    return_mode: self.mode,
                 });
                 self.mode = Mode::Cmdline;
                 Ok(())
@@ -1114,8 +1128,13 @@ impl AppState {
                 Ok(())
             }
             Action::CmdlineCancel => {
+                let return_mode = self
+                    .cmdline
+                    .as_ref()
+                    .map(|cmdline| cmdline.return_mode)
+                    .unwrap_or(Mode::Browser);
                 self.cmdline = None;
-                self.mode = Mode::Browser;
+                self.mode = return_mode;
                 self.force_preview_redraw();
                 Ok(())
             }
@@ -1248,6 +1267,11 @@ impl AppState {
             }
             Action::Back => {
                 self.mode = match self.mode {
+                    Mode::Browser
+                        if matches!(self.browser_filter, BrowserFilter::Quantity { .. }) =>
+                    {
+                        Mode::QuantityPicker
+                    }
                     Mode::ConfirmDelete(_) => Mode::Browser,
                     Mode::ConfirmPurge(_) => Mode::Trash,
                     Mode::ConfirmRemoveQuantity(_) => Mode::QuantityPicker,
@@ -1284,12 +1308,26 @@ impl AppState {
             Action::EditorNextField => {
                 if let Some(editor) = &mut self.editor {
                     editor.focus = editor.focus.next();
+                    editor.active = false;
                 }
                 Ok(())
             }
             Action::EditorPrevField => {
                 if let Some(editor) = &mut self.editor {
                     editor.focus = editor.focus.prev();
+                    editor.active = false;
+                }
+                Ok(())
+            }
+            Action::EditorActivateField => {
+                if let Some(editor) = &mut self.editor {
+                    editor.active = true;
+                }
+                Ok(())
+            }
+            Action::EditorDeactivateField => {
+                if let Some(editor) = &mut self.editor {
+                    editor.active = false;
                 }
                 Ok(())
             }
@@ -2026,6 +2064,7 @@ impl AppState {
             ),
             fields,
             focus: EditorField::Name,
+            active: false,
             related_cursor: 0,
             reference_cursor: 0,
             variable_cursor: 0,
@@ -2084,6 +2123,12 @@ impl AppState {
                 }
                 return;
             }
+            KeyCode::Char('o') if focused == EditorField::References => {
+                if let Err(err) = self.open_reference() {
+                    self.report_error(err);
+                }
+                return;
+            }
             KeyCode::Char('k') if focused == EditorField::Variables => {
                 editor.variable_cursor = editor.variable_cursor.saturating_sub(1);
                 return;
@@ -2096,6 +2141,12 @@ impl AppState {
             KeyCode::Char('d') if focused == EditorField::Variables => {
                 if let Some(idx) = self.current_variable_index() {
                     self.mode = Mode::ConfirmRemoveVariable(idx);
+                }
+                return;
+            }
+            KeyCode::Char('e') if focused == EditorField::Variables => {
+                if let Some(idx) = self.current_variable_index() {
+                    self.open_variable_form(Some(idx));
                 }
                 return;
             }
@@ -2138,7 +2189,11 @@ impl AppState {
             }
             KeyCode::Enter if focused == EditorField::Variables => {
                 if let Some(idx) = self.current_variable_index() {
-                    self.open_variable_form(Some(idx));
+                    match self.open_variable_quantity(idx) {
+                        Ok(true) => {}
+                        Ok(false) => {}
+                        Err(err) => self.report_error(err),
+                    }
                 }
                 return;
             }
@@ -2342,6 +2397,79 @@ impl AppState {
             editor.variable_form = form;
         }
         self.mode = Mode::VariableEditor;
+    }
+
+    fn open_variable_quantity(&mut self, index: usize) -> anyhow::Result<bool> {
+        let Some(id) = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.variables.get(index))
+            .and_then(|variable| variable.quantity_id)
+        else {
+            return Ok(false);
+        };
+        let Some(label) = self
+            .quantities
+            .iter()
+            .find(|(quantity, _)| quantity.id == id)
+            .map(|(quantity, _)| quantity_label(quantity))
+        else {
+            return Ok(false);
+        };
+        if self.editor.as_ref().is_some_and(|editor| editor.dirty) {
+            self.persist_editor(false)?;
+        }
+        self.quantities = self.store.quantities()?;
+        if let Some(index) = self
+            .quantities
+            .iter()
+            .position(|(quantity, _)| quantity.id == id)
+        {
+            self.move_quantity_cursor_to(index);
+        }
+        self.quantity_picker_back = QuantityPickerBackTarget::ReturnToEditor {
+            filter: self.browser_filter.clone(),
+            selected: self.editor.as_ref().and_then(|editor| editor.editing),
+        };
+        self.mode = Mode::QuantityPicker;
+        self.status = format!("Quantity: {label}");
+        Ok(true)
+    }
+
+    fn open_quantity_equations(&mut self, id: QuantityId, label: String) -> anyhow::Result<()> {
+        self.browser_filter = BrowserFilter::Quantity { id, label };
+        self.cursor = 0;
+        self.refresh_items()?;
+        self.status = format!("{}: {} match(es)", self.browser_title(), self.items.len());
+        self.schedule_selected();
+        Ok(())
+    }
+
+    fn close_quantity_picker(&mut self) -> anyhow::Result<()> {
+        match std::mem::replace(
+            &mut self.quantity_picker_back,
+            QuantityPickerBackTarget::None,
+        ) {
+            QuantityPickerBackTarget::None => {}
+            QuantityPickerBackTarget::ReturnTo(mode) => {
+                self.mode = mode;
+                self.schedule_selected();
+            }
+            QuantityPickerBackTarget::ReturnToEditor { filter, selected } => {
+                self.browser_filter = filter;
+                self.cursor = 0;
+                self.refresh_items()?;
+                if let Some(id) = selected
+                    && let Some(index) = self.items.iter().position(|item| item.id == id)
+                {
+                    self.cursor = index;
+                    self.selected = self.store.get(id).ok();
+                }
+                self.mode = Mode::Editor;
+                self.schedule_selected();
+            }
+        }
+        Ok(())
     }
 
     fn input_variable_form(&mut self, key: crossterm::event::KeyEvent) {
@@ -3503,8 +3631,9 @@ fn terminal_cell_height_px(cell_size_px: TerminalCellSize) -> u32 {
     }
 }
 
-const COMMANDS: [&str; 8] = [
+const COMMANDS: [&str; 9] = [
     "delete",
+    "equations",
     "exit",
     "new",
     "openReference",
@@ -3541,6 +3670,7 @@ fn exact_command(input: &str) -> Option<&'static str> {
 fn command_action(command: &str) -> Option<Action> {
     match command {
         "delete" => Some(Action::DeleteRequest),
+        "equations" => Some(Action::OpenEquations),
         "exit" => Some(Action::Quit),
         "new" => Some(Action::NewEquation),
         "openReference" => Some(Action::OpenReference),
@@ -3673,6 +3803,7 @@ mod tests {
             command_matches(""),
             [
                 "delete",
+                "equations",
                 "exit",
                 "new",
                 "openReference",
@@ -3709,6 +3840,7 @@ mod tests {
             input: "se".to_string(),
             cursor: 2,
             selected: 0,
+            return_mode: super::Mode::Browser,
         });
 
         app.accept_cmdline();
@@ -3720,7 +3852,7 @@ mod tests {
 
     #[test]
     fn cmdline_selection_cycles_through_matches() {
-        let mut app = test_app_with_cmdline("");
+        let mut app = test_app_with_cmdline("e");
 
         app.input_cmdline(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
@@ -3790,6 +3922,248 @@ mod tests {
 
         assert!(matches!(app.mode, super::Mode::TagPicker));
         assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn cmdline_cancel_from_quantities_returns_to_quantities() {
+        let mut app = test_app();
+        app.apply(Action::OpenQuantities);
+        app.apply(Action::OpenCmdline);
+
+        app.apply(Action::CmdlineCancel);
+
+        assert!(matches!(app.mode, super::Mode::QuantityPicker));
+        assert!(app.cmdline.is_none());
+    }
+
+    #[test]
+    fn quantity_picker_escape_returns_to_previous_view() {
+        let mut app = test_app();
+        app.browser_filter = super::BrowserFilter::Search("energy".to_string());
+        app.apply(Action::OpenQuantities);
+
+        let action = map_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &app);
+        app.apply(action);
+
+        assert!(matches!(app.mode, super::Mode::Browser));
+        assert_eq!(
+            app.browser_filter,
+            super::BrowserFilter::Search("energy".to_string())
+        );
+    }
+
+    #[test]
+    fn quantity_picker_q_quits() {
+        let mut app = test_app();
+        app.apply(Action::OpenQuantities);
+
+        let action = map_key(key('q'), &app);
+        app.apply(action);
+
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn quantity_equation_list_escape_returns_to_quantity_picker() {
+        let mut app = test_app();
+        let quantity = Quantity::new("E".to_string());
+        app.store.insert_quantity(&quantity).unwrap();
+        app.reload().unwrap();
+        app.apply(Action::OpenQuantities);
+
+        app.apply(Action::QuantityPickerApply);
+        assert!(matches!(app.mode, super::Mode::Browser));
+        assert!(matches!(
+            app.browser_filter,
+            super::BrowserFilter::Quantity { id, .. } if id == quantity.id
+        ));
+
+        let action = map_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &app);
+        app.apply(action);
+
+        assert!(matches!(app.mode, super::Mode::QuantityPicker));
+        assert!(matches!(
+            app.browser_filter,
+            super::BrowserFilter::Quantity { id, .. } if id == quantity.id
+        ));
+    }
+
+    #[test]
+    fn variable_enter_opens_linked_quantity() {
+        let mut app = test_app();
+        let quantity = Quantity::new("E".to_string());
+        app.store.insert_quantity(&quantity).unwrap();
+        app.reload().unwrap();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = EditorField::Variables;
+            editor.variables = vec![Variable {
+                symbol: "E".to_string(),
+                description: "energy".to_string(),
+                quantity_id: Some(quantity.id),
+            }];
+        }
+
+        app.input_editor(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(app.mode, super::Mode::QuantityPicker));
+        assert_eq!(app.quantities[app.quantity_cursor].0.id, quantity.id);
+        assert!(app.editor.is_some());
+    }
+
+    #[test]
+    fn inactive_editor_jk_moves_between_fields() {
+        let mut app = test_app();
+        app.open_editor(None);
+
+        app.apply(map_key(key('j'), &app));
+        assert_eq!(app.editor.as_ref().unwrap().focus, EditorField::Description);
+
+        app.apply(map_key(key('k'), &app));
+        assert_eq!(app.editor.as_ref().unwrap().focus, EditorField::Name);
+        assert!(!app.editor.as_ref().unwrap().active);
+    }
+
+    #[test]
+    fn editor_enter_activates_and_escape_deactivates_field() {
+        let mut app = test_app();
+        app.open_editor(None);
+
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &app,
+        ));
+        assert!(app.editor.as_ref().unwrap().active);
+
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        assert!(matches!(app.mode, super::Mode::Editor));
+        assert!(!app.editor.as_ref().unwrap().active);
+    }
+
+    #[test]
+    fn active_editor_jk_goes_to_field_input() {
+        let mut app = test_app();
+        app.open_editor(None);
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &app,
+        ));
+
+        app.apply(map_key(key('j'), &app));
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!(editor.focus, EditorField::Name);
+        assert_eq!(editor.field_text(EditorField::Name), "j");
+    }
+
+    #[test]
+    fn variable_quantity_picker_escape_returns_to_editor() {
+        let mut app = test_app();
+        let quantity = Quantity::new("E".to_string());
+        app.store.insert_quantity(&quantity).unwrap();
+        app.reload().unwrap();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = EditorField::Variables;
+            editor.variables = vec![Variable {
+                symbol: "E".to_string(),
+                description: "energy".to_string(),
+                quantity_id: Some(quantity.id),
+            }];
+        }
+        app.input_editor(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let action = map_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &app);
+        app.apply(action);
+
+        assert!(matches!(app.mode, super::Mode::Editor));
+        assert!(app.editor.is_some());
+    }
+
+    #[test]
+    fn variable_quantity_drilldown_restores_original_equation_list() {
+        let mut app = test_app();
+        let quantity = Quantity::new("E".to_string());
+        let mut equation = Equation::new("Energy test".to_string(), "E_{test} = x".to_string());
+        equation.variables = vec![Variable {
+            symbol: "E".to_string(),
+            description: "energy".to_string(),
+            quantity_id: Some(quantity.id),
+        }];
+        let equation_id = equation.id;
+        app.store.insert_quantity(&quantity).unwrap();
+        app.store.insert(&equation).unwrap();
+        app.reload().unwrap();
+        app.cursor = app
+            .items
+            .iter()
+            .position(|item| item.id == equation_id)
+            .unwrap();
+        app.apply(Action::OpenCurrent);
+        app.editor.as_mut().unwrap().focus = EditorField::Variables;
+
+        app.input_editor(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.apply(Action::QuantityPickerApply);
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+        app.apply(map_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &app,
+        ));
+
+        assert!(matches!(app.mode, super::Mode::Browser));
+        assert_eq!(app.browser_filter, super::BrowserFilter::None);
+        assert_eq!(app.selected_id(), Some(equation_id));
+    }
+
+    #[test]
+    fn variable_enter_without_quantity_is_noop() {
+        let mut app = test_app();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = EditorField::Variables;
+            editor.variables = vec![Variable {
+                symbol: "x".to_string(),
+                description: "position".to_string(),
+                quantity_id: None,
+            }];
+        }
+
+        app.input_editor(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(app.mode, super::Mode::Editor));
+        assert!(app.editor.is_some());
+    }
+
+    #[test]
+    fn variable_e_opens_edit_view() {
+        let mut app = test_app();
+        app.open_editor(None);
+        {
+            let editor = app.editor.as_mut().unwrap();
+            editor.focus = EditorField::Variables;
+            editor.variables = vec![Variable {
+                symbol: "x".to_string(),
+                description: "position".to_string(),
+                quantity_id: None,
+            }];
+        }
+
+        app.input_editor(key('e'));
+
+        assert!(matches!(app.mode, super::Mode::VariableEditor));
     }
 
     #[test]
@@ -4247,6 +4621,7 @@ mod tests {
             input: input.to_string(),
             cursor: input.len(),
             selected: 0,
+            return_mode: super::Mode::Browser,
         });
         app
     }

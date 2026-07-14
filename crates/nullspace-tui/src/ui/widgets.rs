@@ -473,15 +473,19 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         (
             "Quantities",
-            "Enter, n, e, d, Esc/q",
-            "Filter by quantity, new, edit, delete, back",
+            "Enter, Esc, q, n, e, d",
+            "Filter by quantity, back, quit, new, edit, delete",
         ),
         (
             "Editor",
-            "Tab/Shift-Tab, Ctrl-S, Esc",
-            "Field navigation, save, back",
+            "j/k, Enter, Esc, Ctrl-S",
+            "Move field, activate field, deactivate/back, save",
         ),
-        ("Editor", "Arrows/Home/End", "Move cursor or list selection"),
+        (
+            "Active editor field",
+            "Arrows/Home/End",
+            "Move text cursor or list selection",
+        ),
         (
             "References field",
             "a, Enter, o, j/k, d",
@@ -489,8 +493,8 @@ fn help_rows() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         (
             "Variables field",
-            "a, Enter, j/k, d",
-            "Add, edit, move, remove variable",
+            "a, e, Enter, j/k, d",
+            "Add, edit, open quantity, move, remove variable",
         ),
         (
             "Variables field",

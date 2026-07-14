@@ -62,7 +62,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             }
         }
         Mode::Cmdline => {
-            browser::draw(frame, app);
+            match app.cmdline.as_ref().map(|cmdline| cmdline.return_mode) {
+                Some(Mode::QuantityPicker) => widgets::quantity_picker(frame, app),
+                _ => browser::draw(frame, app),
+            }
             widgets::cmdline(frame, cmdline_area, app);
         }
         Mode::Editor

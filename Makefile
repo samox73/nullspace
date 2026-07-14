@@ -18,7 +18,8 @@ import:
 ai-complete: export
 	cp equations.json equations.json.bak
 	claude -p "Follow the instructions in ai-complete.md." \
-		--allowedTools "Read,Edit,Write,WebSearch,WebFetch"
+		--allowedTools "Read,Edit,Write,WebSearch,WebFetch" \
+		--model opus
 	jq -e '.equations | length' equations.json > /dev/null
 	@echo "review with 'make ai-diff', then apply with 'make import'"
 
