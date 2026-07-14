@@ -1,6 +1,6 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
     Frame,
+    layout::{Constraint, Direction, Layout, Rect},
 };
 
 use crate::app::{AppState, BrowserFilter, BrowserFilterFocus, CacheStatus, Mode};
@@ -138,7 +138,7 @@ fn search_details(query: &str, tag_counts: &[(String, usize)]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{search_box_rows, search_details, SEARCH_BOX_BASE_ROWS};
+    use super::{SEARCH_BOX_BASE_ROWS, search_box_rows, search_details};
 
     #[test]
     fn empty_search_has_no_extra_details() {

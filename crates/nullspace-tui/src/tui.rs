@@ -3,9 +3,9 @@ use std::io::{self, Stdout};
 use crossterm::{
     event::{DisableFocusChange, EnableFocusChange},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 pub fn init() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;

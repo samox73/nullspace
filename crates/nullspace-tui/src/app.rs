@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use nullspace_core::reference::{normalize_doi, normalize_pages, reference_link};
 use nullspace_core::{
-    render::validate_latex, Equation, EquationId, EquationSummary, Error, Reference, Store,
-    TrashEntry, Variable,
+    Equation, EquationId, EquationSummary, Error, Reference, Store, TrashEntry, Variable,
+    render::validate_latex,
 };
 use ratatui::layout::Size;
 use ratatui_image::protocol::StatefulProtocol;
@@ -369,10 +369,10 @@ impl AppState {
         self.tag_counts = self.store.tag_counts()?;
         self.untagged_count = self.store.untagged_count()?;
         self.refresh_items()?;
-        if let Some(id) = selected {
-            if let Some(index) = self.items.iter().position(|item| item.id == id) {
-                self.cursor = index;
-            }
+        if let Some(id) = selected
+            && let Some(index) = self.items.iter().position(|item| item.id == id)
+        {
+            self.cursor = index;
         }
         if self.cursor >= self.items.len() {
             self.cursor = self.items.len().saturating_sub(1);
@@ -428,10 +428,10 @@ impl AppState {
         // The size only becomes known once the preview pane is first drawn. If the current
         // equation is sitting on a spinner with its image already decoded, kick off its
         // (async) encode now that we know the target size.
-        if self.preview_protocol.is_none() {
-            if let Some(display) = self.cache.get(&self.preview_cache_key).cloned() {
-                self.queue_current_protocol_warm(self.preview_cache_key, display);
-            }
+        if self.preview_protocol.is_none()
+            && let Some(display) = self.cache.get(&self.preview_cache_key).cloned()
+        {
+            self.queue_current_protocol_warm(self.preview_cache_key, display);
         }
         if matches!(self.mode, Mode::Browser | Mode::Search) {
             self.schedule_warm_neighbors();
@@ -1030,34 +1030,34 @@ impl AppState {
                 Ok(())
             }
             Action::EditorMoveLeft => {
-                if let Some(editor) = &mut self.editor {
-                    if !is_list_field(editor.focus) {
-                        editor.fields[editor.focus].move_cursor(CursorMove::Back);
-                    }
+                if let Some(editor) = &mut self.editor
+                    && !is_list_field(editor.focus)
+                {
+                    editor.fields[editor.focus].move_cursor(CursorMove::Back);
                 }
                 Ok(())
             }
             Action::EditorMoveRight => {
-                if let Some(editor) = &mut self.editor {
-                    if !is_list_field(editor.focus) {
-                        editor.fields[editor.focus].move_cursor(CursorMove::Forward);
-                    }
+                if let Some(editor) = &mut self.editor
+                    && !is_list_field(editor.focus)
+                {
+                    editor.fields[editor.focus].move_cursor(CursorMove::Forward);
                 }
                 Ok(())
             }
             Action::EditorHome => {
-                if let Some(editor) = &mut self.editor {
-                    if !is_list_field(editor.focus) {
-                        editor.fields[editor.focus].move_cursor(CursorMove::Head);
-                    }
+                if let Some(editor) = &mut self.editor
+                    && !is_list_field(editor.focus)
+                {
+                    editor.fields[editor.focus].move_cursor(CursorMove::Head);
                 }
                 Ok(())
             }
             Action::EditorEnd => {
-                if let Some(editor) = &mut self.editor {
-                    if !is_list_field(editor.focus) {
-                        editor.fields[editor.focus].move_cursor(CursorMove::End);
-                    }
+                if let Some(editor) = &mut self.editor
+                    && !is_list_field(editor.focus)
+                {
+                    editor.fields[editor.focus].move_cursor(CursorMove::End);
                 }
                 Ok(())
             }
@@ -1220,12 +1220,11 @@ impl AppState {
             && self.editor.as_ref().is_some_and(|editor| {
                 editor.dirty && editor.last_change.elapsed() >= Duration::from_millis(300)
             })
+            && let Err(err) = self.persist_editor(false)
         {
-            if let Err(err) = self.persist_editor(false) {
-                self.status = err.to_string();
-                if let Some(editor) = &mut self.editor {
-                    editor.last_change = Instant::now();
-                }
+            self.status = err.to_string();
+            if let Some(editor) = &mut self.editor {
+                editor.last_change = Instant::now();
             }
         }
     }
@@ -1251,19 +1250,17 @@ impl AppState {
             .pending_protocol_results
             .iter()
             .position(|result| protocol_result_key(result) == Some(preview_key))
+            && let Some(result) = self.pending_protocol_results.remove(index)
         {
-            if let Some(result) = self.pending_protocol_results.remove(index) {
-                self.handle_protocol_result(result);
-            }
+            self.handle_protocol_result(result);
         }
         if let Some(index) = self
             .pending_queue_results
             .iter()
             .position(|result| result.key == preview_key)
+            && let Some(result) = self.pending_queue_results.remove(index)
         {
-            if let Some(result) = self.pending_queue_results.remove(index) {
-                self.handle_queue_result(result);
-            }
+            self.handle_queue_result(result);
         }
     }
 
@@ -1975,14 +1972,14 @@ impl AppState {
     }
 
     fn remove_reference(&mut self, index: usize) {
-        if let Some(editor) = &mut self.editor {
-            if index < editor.references.len() {
-                editor.references.remove(index);
-                editor.reference_cursor = editor
-                    .reference_cursor
-                    .min(editor.references.len().saturating_sub(1));
-                mark_editor_dirty(editor);
-            }
+        if let Some(editor) = &mut self.editor
+            && index < editor.references.len()
+        {
+            editor.references.remove(index);
+            editor.reference_cursor = editor
+                .reference_cursor
+                .min(editor.references.len().saturating_sub(1));
+            mark_editor_dirty(editor);
         }
     }
 
@@ -2076,16 +2073,16 @@ impl AppState {
     }
 
     fn remove_variable(&mut self, index: usize) {
-        if let Some(editor) = &mut self.editor {
-            if index < editor.variables.len() {
-                editor.variables.remove(index);
-                editor.variable_cursor = editor
-                    .variable_cursor
-                    .min(editor.variables.len().saturating_sub(1));
-                let display = format_variables(&editor.variables);
-                editor.set_field_text(5, display);
-                mark_editor_dirty(editor);
-            }
+        if let Some(editor) = &mut self.editor
+            && index < editor.variables.len()
+        {
+            editor.variables.remove(index);
+            editor.variable_cursor = editor
+                .variable_cursor
+                .min(editor.variables.len().saturating_sub(1));
+            let display = format_variables(&editor.variables);
+            editor.set_field_text(5, display);
+            mark_editor_dirty(editor);
         }
     }
 
@@ -2404,14 +2401,14 @@ impl AppState {
     }
 
     fn current_reference_target(&mut self) -> anyhow::Result<Option<String>> {
-        if let Some(editor) = self.editor.as_ref() {
-            if editor.focus == 3 {
-                let target = self
-                    .current_reference_index()
-                    .and_then(|index| editor.references.get(index))
-                    .and_then(reference_link);
-                return Ok(target);
-            }
+        if let Some(editor) = self.editor.as_ref()
+            && editor.focus == 3
+        {
+            let target = self
+                .current_reference_index()
+                .and_then(|index| editor.references.get(index))
+                .and_then(reference_link);
+            return Ok(target);
         }
 
         if let Some(target) = self
@@ -2591,10 +2588,10 @@ impl AppState {
             return Ok(());
         }
         self.store.update_px_height(id, new_px)?;
-        if let Some(selected) = &mut self.selected {
-            if selected.id == id {
-                selected.px_height = new_px;
-            }
+        if let Some(selected) = &mut self.selected
+            && selected.id == id
+        {
+            selected.px_height = new_px;
         }
         if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
             item.px_height = new_px;
@@ -2752,12 +2749,12 @@ fn is_supported_reference_target(target: &str) -> bool {
 }
 
 fn expand_home_path(target: &str) -> String {
-    if let Some(rest) = target.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            let mut path = std::path::PathBuf::from(home);
-            path.push(rest);
-            return path.to_string_lossy().into_owned();
-        }
+    if let Some(rest) = target.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let mut path = std::path::PathBuf::from(home);
+        path.push(rest);
+        return path.to_string_lossy().into_owned();
     }
     target.to_string()
 }
@@ -2936,9 +2933,9 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_matches, default_equation_px, effective_render_px, fuzzy_matches_item,
-        is_supported_reference_target, set_textarea_text, textarea_from_text, textarea_lines,
-        textarea_text, CmdlineState,
+        CmdlineState, command_matches, default_equation_px, effective_render_px,
+        fuzzy_matches_item, is_supported_reference_target, set_textarea_text, textarea_from_text,
+        textarea_lines, textarea_text,
     };
     use crate::action::Action;
     use crate::event::map_key;

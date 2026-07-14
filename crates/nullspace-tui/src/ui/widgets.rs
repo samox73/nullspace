@@ -1,4 +1,5 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect, Size},
     prelude::Position,
     style::{Color, Style},
@@ -6,13 +7,12 @@ use ratatui::{
     widgets::{
         Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Wrap,
     },
-    Frame,
 };
 use ratatui_image::{Resize, ResizeEncodeRender, StatefulImage};
 
 use nullspace_core::{EquationSummary, TrashEntry};
 
-use crate::app::{command_matches, AppState, TagPickerRow};
+use crate::app::{AppState, TagPickerRow, command_matches};
 
 const CMDLINE_WIDTH: u16 = 60;
 const CMDLINE_PROMPT_HEIGHT: u16 = 3;
@@ -84,10 +84,10 @@ fn equation_list_inner(
             std::iter::once(item).chain(spacer)
         })
         .collect::<Vec<_>>();
-    if items.is_empty() {
-        if let Some(message) = empty_message {
-            items.push(ListItem::new(Line::from(message)));
-        }
+    if items.is_empty()
+        && let Some(message) = empty_message
+    {
+        items.push(ListItem::new(Line::from(message)));
     }
     let mut state = ListState::default().with_offset(offset * 2);
     if !rows.is_empty() {

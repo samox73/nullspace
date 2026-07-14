@@ -3,8 +3,8 @@ pub mod editor;
 pub mod widgets;
 
 use crate::app::{AppState, LayoutOrientation, Mode};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 pub const PREVIEW_PERCENT: u16 = 50;
 pub const PREVIEW_VERTICAL_ROWS: u16 = 7;
@@ -95,7 +95,7 @@ pub fn content_panes(area: Rect, orientation: LayoutOrientation) -> (Rect, Rect)
 
 #[cfg(test)]
 mod tests {
-    use super::{content_panes, primary_pane_area, PREVIEW_PERCENT, PREVIEW_VERTICAL_ROWS};
+    use super::{PREVIEW_PERCENT, PREVIEW_VERTICAL_ROWS, content_panes, primary_pane_area};
     use crate::app::LayoutOrientation;
     use ratatui::layout::Rect;
 

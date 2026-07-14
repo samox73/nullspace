@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::identity::equation_identity;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;

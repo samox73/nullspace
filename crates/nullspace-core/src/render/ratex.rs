@@ -1,7 +1,7 @@
 use image::RgbaImage;
-use ratex_layout::{layout, to_display_list, LayoutOptions};
+use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_parser::parser::parse;
-use ratex_svg::{render_to_svg, SvgOptions};
+use ratex_svg::{SvgOptions, render_to_svg};
 use ratex_types::{color::Color, math_style::MathStyle};
 use resvg::{tiny_skia, usvg};
 

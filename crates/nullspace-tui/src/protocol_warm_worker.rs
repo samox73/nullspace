@@ -1,10 +1,10 @@
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use image::RgbaImage;
 use ratatui::layout::Size;
-use ratatui_image::{protocol::StatefulProtocol, Resize, ResizeEncodeRender};
+use ratatui_image::{Resize, ResizeEncodeRender, protocol::StatefulProtocol};
 use rayon::prelude::*;
 
 use crate::graphics::Graphics;

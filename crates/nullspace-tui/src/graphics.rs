@@ -1,7 +1,7 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use ratatui::layout::Size;
 use ratatui_image::{
-    picker::{cap_parser::QueryStdioOptions, Capability, Picker, ProtocolType},
+    picker::{Capability, Picker, ProtocolType, cap_parser::QueryStdioOptions},
     protocol::StatefulProtocol,
 };
 use std::time::Duration;

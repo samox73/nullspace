@@ -3,7 +3,7 @@ mod migrations;
 use crate::error::{Error, Result};
 use crate::identity::equation_identity;
 use crate::model::*;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -25,8 +25,8 @@ pub struct ImportSummary {
 }
 
 pub fn now_rfc3339() -> String {
-    use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
     OffsetDateTime::now_utc().format(&Rfc3339).unwrap()
 }
 
