@@ -35,7 +35,16 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         &rows,
         (!rows.is_empty()).then_some(app.cursor),
         app.list_scroll_offset,
-        app.browser_title(),
+        format!(
+            "{} ({}/{})",
+            app.browser_title(),
+            if rows.is_empty() {
+                0
+            } else {
+                app.cursor.min(rows.len() - 1) + 1
+            },
+            rows.len()
+        ),
         matches!(app.mode, Mode::Search) && app.browser_filter_focus == BrowserFilterFocus::List,
         "No items",
     );

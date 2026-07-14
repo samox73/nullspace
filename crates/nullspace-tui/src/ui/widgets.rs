@@ -603,7 +603,11 @@ fn quantity_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {
                 "No quantities\n\nPress n to add one, or use c in an equation's Variables field",
             )
             .alignment(Alignment::Center)
-            .block(Block::default().title("Quantities").borders(Borders::ALL)),
+            .block(
+                Block::default()
+                    .title("Quantities (0/0)")
+                    .borders(Borders::ALL),
+            ),
             area,
         );
         return;
@@ -611,7 +615,8 @@ fn quantity_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {
     let items = app
         .quantities
         .iter()
-        .map(|(quantity, count)| {
+        .enumerate()
+        .flat_map(|(index, (quantity, count))| {
             let detail = [
                 quantity.units.as_str(),
                 quantity.description.lines().next().unwrap_or(""),
@@ -620,7 +625,7 @@ fn quantity_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {
             .filter(|part| !part.trim().is_empty())
             .collect::<Vec<_>>()
             .join(" - ");
-            ListItem::new(vec![
+            let item = ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(
                         crate::app::quantity_label(quantity),
@@ -629,19 +634,25 @@ fn quantity_picker_list(frame: &mut Frame<'_>, area: Rect, app: &mut AppState) {
                     Span::raw(format!("  ({count} eq)")),
                 ]),
                 Line::styled(detail, Style::default().fg(Color::DarkGray)),
-            ])
+            ]);
+            let spacer = (index + 1 < app.quantities.len()).then(|| ListItem::new(Line::from("")));
+            std::iter::once(item).chain(spacer)
         })
         .collect::<Vec<_>>();
     let list = List::new(items)
         .block(
             Block::default()
-                .title("Quantities  (enter filter, n new, e edit, d delete)")
+                .title(format!(
+                    "Quantities ({}/{})  (enter filter, n new, e edit, d delete)",
+                    app.quantity_cursor.min(app.quantities.len() - 1) + 1,
+                    app.quantities.len()
+                ))
                 .borders(Borders::ALL),
         )
         .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .highlight_symbol("> ");
     let mut state = ListState::default().with_offset(app.quantity_scroll_offset * 2);
-    state.select(Some(app.quantity_cursor.min(app.quantities.len() - 1)));
+    state.select(Some(app.quantity_cursor.min(app.quantities.len() - 1) * 2));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
