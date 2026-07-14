@@ -1,5 +1,5 @@
 use crate::action::Action;
-use crate::app::{AppState, BrowserFilterFocus, Mode};
+use crate::app::{AppState, BrowserFilterFocus, EditorField, Mode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
@@ -192,7 +192,10 @@ pub fn map_key(key: KeyEvent, app: &AppState) -> Action {
                 KeyCode::Home => Action::EditorHome,
                 KeyCode::End => Action::EditorEnd,
                 KeyCode::Char('o')
-                    if app.editor.as_ref().is_some_and(|editor| editor.focus == 4) =>
+                    if app
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.focus == EditorField::References) =>
                 {
                     Action::OpenReference
                 }

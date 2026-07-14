@@ -7,35 +7,36 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
-use crate::app::{AppState, Mode, RelatedPickerFocus, ResolverRow};
+use crate::app::{AppState, EditorField, Mode, RelatedPickerFocus, ResolverRow};
 use crate::ui::widgets::{self, EquationListRow};
-
-const LABELS: [&str; 8] = [
-    "Name",
-    "Description",
-    "LaTeX",
-    "Assumptions",
-    "References",
-    "Tags",
-    "Variables",
-    "Related",
-];
-
-const PLACEHOLDERS: [&str; 8] = [
-    "",
-    "",
-    "E = mc^2",
-    "non-relativistic limit, T << T_F",
-    "",
-    "physics, relativity",
-    "E = energy\nm = mass\nc = speed of light",
-    "Mass energy equivalence, Euler identity",
-];
 
 const MIN_TEXT_BOX_LINES: u16 = 1;
 const MAX_TEXT_BOX_LINES: u16 = 10;
 const BLOCK_CHROME_ROWS: u16 = 2;
-const MULTILINE_FIELDS: [usize; 3] = [1, 2, 3];
+
+fn field_title(field: EditorField) -> &'static str {
+    match field {
+        EditorField::Name => "Name",
+        EditorField::Description => "Description",
+        EditorField::Latex => "LaTeX",
+        EditorField::Assumptions => "Assumptions",
+        EditorField::References => "References (a add, enter edit, o open, d remove)",
+        EditorField::Tags => "Tags",
+        EditorField::Variables => "Variables (a add, enter edit, d remove, c link, u unlink)",
+        EditorField::Related => "Related (up/down select, enter open, r edit)",
+    }
+}
+
+fn field_placeholder(field: EditorField) -> &'static str {
+    match field {
+        EditorField::Latex => "E = mc^2",
+        EditorField::Assumptions => "non-relativistic limit, T << T_F",
+        EditorField::Tags => "physics, relativity",
+        EditorField::Variables => "E = energy\nm = mass\nc = speed of light",
+        EditorField::Related => "Mass energy equivalence, Euler identity",
+        EditorField::Name | EditorField::Description | EditorField::References => "",
+    }
+}
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let outer = Layout::default()
@@ -54,7 +55,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .constraints(row_constraints)
         .split(form_area);
 
-    let current_latex = app.editor.as_ref().map(|editor| editor.field_text(2));
+    let current_latex = app
+        .editor
+        .as_ref()
+        .map(|editor| editor.field_text(EditorField::Latex));
     let latex_invalid = current_latex
         .as_deref()
         .is_some_and(|latex| app.preview_error.is_some() && app.preview_latex == latex);
@@ -67,71 +71,67 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .collect();
 
     if let Some(editor) = &mut app.editor {
-        for (index, area) in rows.iter().enumerate() {
-            let style = if editor.focus == index {
+        for (field, area) in EditorField::ALL.into_iter().zip(rows.iter()) {
+            let style = if editor.focus == field {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
-            let title = match index {
-                4 => "References (a add, enter edit, o open, d remove)",
-                6 => "Variables (a add, enter edit, d remove, c link, u unlink)",
-                7 => "Related (up/down select, enter open, r edit)",
-                _ => LABELS[index],
-            };
             let block = Block::default()
-                .title(title)
+                .title(field_title(field))
                 .borders(Borders::ALL)
-                .border_style(if index == 2 && latex_invalid {
+                .border_style(if field == EditorField::Latex && latex_invalid {
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                 } else {
                     style
                 });
-            if index == 4 {
-                render_reference_field(
+            match field {
+                EditorField::References => render_reference_field(
                     frame,
                     *area,
                     block,
                     &editor.references,
                     editor.reference_cursor,
-                );
-                continue;
-            }
-            if index == 7 {
-                render_related_field(
+                ),
+                EditorField::Related => render_related_field(
                     frame,
                     *area,
                     block,
-                    &editor.field_text(index),
+                    &editor.field_text(field),
                     editor.related_cursor,
-                );
-                continue;
-            }
-            if index == 6 {
-                render_variable_field(
+                ),
+                EditorField::Variables => render_variable_field(
                     frame,
                     *area,
                     block,
                     &editor.variables,
                     editor.variable_cursor,
                     &quantity_names,
-                );
-                continue;
+                ),
+                EditorField::Name
+                | EditorField::Description
+                | EditorField::Latex
+                | EditorField::Assumptions
+                | EditorField::Tags => {
+                    let placeholder = field_placeholder(field);
+                    let focused = editor.focus;
+                    let textarea = editor.field_mut(field);
+                    textarea.set_block(block);
+                    textarea.set_cursor_line_style(Style::default());
+                    textarea.set_cursor_style(if field == focused && cursor_visible {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    });
+                    if !placeholder.is_empty() {
+                        textarea.set_placeholder_text(placeholder);
+                        textarea.set_placeholder_style(Style::default().fg(Color::DarkGray));
+                    }
+                    frame.render_widget(&*textarea, *area);
+                }
             }
-            editor.fields[index].set_block(block);
-            editor.fields[index].set_cursor_line_style(Style::default());
-            editor.fields[index].set_cursor_style(if index == editor.focus && cursor_visible {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
-            });
-            if !PLACEHOLDERS[index].is_empty() {
-                editor.fields[index].set_placeholder_text(PLACEHOLDERS[index]);
-                editor.fields[index].set_placeholder_style(Style::default().fg(Color::DarkGray));
-            }
-            frame.render_widget(&editor.fields[index], *area);
         }
     }
     if !matches!(app.mode, Mode::RelatedPicker) {
@@ -162,31 +162,31 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
 }
 
 fn default_row_constraints() -> Vec<Constraint> {
-    vec![
-        Constraint::Length(3),
-        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
-        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
-        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
-        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
-        Constraint::Length(3),
-        Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
-        Constraint::Min(3),
-    ]
+    EditorField::ALL
+        .map(|field| match field {
+            EditorField::Name | EditorField::Tags => Constraint::Length(3),
+            EditorField::Description | EditorField::Latex | EditorField::Assumptions => {
+                Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS)
+            }
+            EditorField::References => Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+            EditorField::Variables => Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+            EditorField::Related => Constraint::Min(3),
+        })
+        .to_vec()
 }
 
 fn editor_row_constraints(editor: &crate::app::EditorState, width: u16) -> Vec<Constraint> {
-    (0..8)
-        .map(|index| match index {
-            0 | 5 => Constraint::Length(3),
-            4 => Constraint::Length(reference_box_height(editor)),
-            6 => Constraint::Length(variable_box_height(editor)),
-            7 => Constraint::Min(3),
-            _ if MULTILINE_FIELDS.contains(&index) => {
-                Constraint::Length(text_box_height(editor, index, width))
+    EditorField::ALL
+        .map(|field| match field {
+            EditorField::Name | EditorField::Tags => Constraint::Length(3),
+            EditorField::Description | EditorField::Latex | EditorField::Assumptions => {
+                Constraint::Length(text_box_height(editor, field, width))
             }
-            _ => Constraint::Length(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS),
+            EditorField::References => Constraint::Length(reference_box_height(editor)),
+            EditorField::Variables => Constraint::Length(variable_box_height(editor)),
+            EditorField::Related => Constraint::Min(3),
         })
-        .collect()
+        .to_vec()
 }
 
 fn reference_box_height(editor: &crate::app::EditorState) -> u16 {
@@ -199,8 +199,9 @@ fn variable_box_height(editor: &crate::app::EditorState) -> u16 {
     (content + BLOCK_CHROME_ROWS).min(MAX_TEXT_BOX_LINES + BLOCK_CHROME_ROWS)
 }
 
-fn text_box_height(editor: &crate::app::EditorState, index: usize, width: u16) -> u16 {
-    let mut textarea = editor.fields[index].clone();
+fn text_box_height(editor: &crate::app::EditorState, field: EditorField, width: u16) -> u16 {
+    debug_assert!(field.is_multiline());
+    let mut textarea = editor.field(field).clone();
     textarea.set_block(Block::default().borders(Borders::ALL));
     textarea.set_min_rows(MIN_TEXT_BOX_LINES + BLOCK_CHROME_ROWS);
     textarea.set_max_rows(MAX_TEXT_BOX_LINES + BLOCK_CHROME_ROWS);
