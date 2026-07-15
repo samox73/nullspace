@@ -35,6 +35,7 @@ pub enum ScanEffort {
 pub enum ScanPhase {
     AwaitingPaste,
     Running,
+    Ready,
     Failed,
 }
 
@@ -49,7 +50,6 @@ pub struct ScanResult {
 }
 
 pub struct ScanState {
-    pub agent: ScanAgent,
     pub model: ScanModel,
     pub effort: ScanEffort,
     pub phase: ScanPhase,
@@ -59,10 +59,22 @@ pub struct ScanState {
     pub rx: Option<mpsc::Receiver<ScanEvent>>,
     pub child: Option<std::process::Child>,
     pub staged_quantities: Vec<Quantity>,
+    pub result: Option<Box<ScanResult>>,
+}
+
+impl Drop for ScanState {
+    fn drop(&mut self) {
+        kill_child(self);
+    }
 }
 
 impl AppState {
     pub fn start_scan(&mut self, agent: ScanAgent) {
+        if self.scan.as_ref().is_some_and(|scan| scan.result.is_some()) {
+            self.mode = Mode::Scan;
+            self.open_scan_review();
+            return;
+        }
         let workdir = std::env::temp_dir().join(format!("nullspace-scan-{}", std::process::id()));
         self.clear_scan();
         if let Err(err) = std::fs::create_dir_all(&workdir) {
@@ -70,7 +82,6 @@ impl AppState {
             return;
         }
         self.scan = Some(ScanState {
-            agent,
             model: ScanModel::for_agent(agent),
             effort: ScanEffort::for_agent(agent),
             phase: ScanPhase::AwaitingPaste,
@@ -80,6 +91,7 @@ impl AppState {
             rx: None,
             child: None,
             staged_quantities: Vec::new(),
+            result: None,
         });
         self.mode = Mode::Scan;
         self.status = "Copy an equation image, then press p".to_string();
@@ -89,6 +101,8 @@ impl AppState {
         let Some(scan) = &mut self.scan else {
             return;
         };
+        // ponytail: clipboard read + png encode block the UI thread (~100ms+ for 4K
+        // captures); move to a worker thread if the freeze gets annoying
         let image = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_image())
         {
             Ok(image) => image,
@@ -150,8 +164,15 @@ impl AppState {
                 return;
             }
         };
+        let output_schema_json = match codex_output_schema_json(&schema) {
+            Ok(json) => json,
+            Err(err) => {
+                self.report_error(err);
+                return;
+            }
+        };
         let schema_path = scan.workdir.join("schema.json");
-        if let Err(err) = std::fs::write(&schema_path, &schema_json) {
+        if let Err(err) = std::fs::write(&schema_path, output_schema_json) {
             self.report_error(err);
             return;
         }
@@ -165,7 +186,7 @@ impl AppState {
             ScanAgent::Claude => {
                 let mut command = Command::new("claude");
                 let model = scan.model.cli_model();
-                let effort = scan.effort.claude_value();
+                let effort = scan.effort.label();
                 command.args([
                     "-p",
                     &prompt,
@@ -228,6 +249,7 @@ impl AppState {
         scan.child = Some(child);
         scan.phase = ScanPhase::Running;
         scan.logs.clear();
+        scan.result = None;
 
         if let Some(stderr) = stderr {
             let tx = tx.clone();
@@ -274,13 +296,15 @@ impl AppState {
                 match result {
                     Ok(result) => {
                         if let Some(scan) = &mut self.scan {
-                            scan.staged_quantities = result.new_quantities;
+                            scan.result = Some(result);
+                            scan.phase = ScanPhase::Ready;
                         }
-                        self.open_editor_with(Some(result.equation), None);
-                        if let Some(editor) = &mut self.editor {
-                            editor.last_saved_signature = String::new();
+                        if matches!(self.mode, Mode::Scan) {
+                            self.open_scan_review();
+                        } else {
+                            self.notification =
+                                Some(Notification::info("scan ready - run :scan to review"));
                         }
-                        self.scan_review = true;
                     }
                     Err(msg) => {
                         if let Some(scan) = &mut self.scan {
@@ -293,6 +317,27 @@ impl AppState {
                 }
             }
         }
+    }
+
+    pub(super) fn open_scan_review(&mut self) {
+        let Some(result) = self.scan.as_mut().and_then(|scan| scan.result.take()) else {
+            return;
+        };
+        let ScanResult {
+            mut equation,
+            new_quantities,
+        } = *result;
+        // the agent-supplied px_height is unvalidated; render at the app default instead
+        equation.px_height = self.default_equation_px();
+        if let Some(scan) = &mut self.scan {
+            scan.staged_quantities = new_quantities;
+        }
+        self.open_editor_with(Some(equation), None);
+        if let Some(editor) = &mut self.editor {
+            // force a signature mismatch so confirming an unedited scan still inserts
+            editor.last_saved_signature = String::new();
+        }
+        self.scan_review = true;
     }
 
     pub(super) fn confirm_scan(&mut self) -> anyhow::Result<()> {
@@ -337,7 +382,6 @@ impl AppState {
             return;
         }
         scan.model = scan.model.next();
-        scan.agent = scan.model.agent();
         scan.effort = scan.effort.supported_for(scan.model);
         self.status = scan.settings_label();
     }
@@ -380,7 +424,7 @@ impl AppState {
     fn clear_scan(&mut self) {
         if let Some(mut scan) = self.scan.take() {
             kill_child(&mut scan);
-            let _ = std::fs::remove_dir_all(scan.workdir);
+            let _ = std::fs::remove_dir_all(&scan.workdir);
         }
     }
 }
@@ -389,8 +433,8 @@ impl ScanState {
     pub fn settings_label(&self) -> String {
         format!(
             "model: {} | intelligence: {}",
-            self.model.label(),
-            self.effort.label_for(self.model)
+            self.model.cli_model(),
+            self.effort.label()
         )
     }
 }
@@ -419,14 +463,6 @@ impl ScanModel {
     }
 
     fn cli_model(self) -> &'static str {
-        match self {
-            Self::ClaudeOpus => "opus",
-            Self::ClaudeSonnet => "sonnet",
-            Self::CodexGpt55 => "gpt-5.5",
-        }
-    }
-
-    fn label(self) -> &'static str {
         match self {
             Self::ClaudeOpus => "opus",
             Self::ClaudeSonnet => "sonnet",
@@ -471,7 +507,8 @@ impl ScanEffort {
         }
     }
 
-    fn claude_value(self) -> &'static str {
+    // display label and claude CLI --effort value (they coincide)
+    fn label(self) -> &'static str {
         match self {
             Self::Low => "low",
             Self::Medium => "medium",
@@ -486,19 +523,8 @@ impl ScanEffort {
             Self::Low => Some("low"),
             Self::Medium => Some("medium"),
             Self::High => Some("high"),
-            Self::XHigh => Some("extra_high"),
+            Self::XHigh => Some("xhigh"),
             Self::Max => None,
-        }
-    }
-
-    fn label_for(self, model: ScanModel) -> &'static str {
-        match (model.agent(), self) {
-            (ScanAgent::Codex, Self::XHigh) => "extra high",
-            (_, Self::Low) => "low",
-            (_, Self::Medium) => "medium",
-            (_, Self::High) => "high",
-            (_, Self::XHigh) => "xhigh",
-            (_, Self::Max) => "max",
         }
     }
 }
@@ -507,6 +533,37 @@ fn kill_child(scan: &mut ScanState) {
     if let Some(mut child) = scan.child.take() {
         let _ = child.kill();
         let _ = child.wait();
+    }
+}
+
+fn codex_output_schema_json(schema: &schemars::Schema) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(schema)?;
+    deny_extra_properties(&mut value);
+    serde_json::to_string_pretty(&value)
+}
+
+fn deny_extra_properties(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if (map.get("type").and_then(|value| value.as_str()) == Some("object")
+                || map.contains_key("properties"))
+                && !map.contains_key("additionalProperties")
+            {
+                map.insert(
+                    "additionalProperties".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+            for value in map.values_mut() {
+                deny_extra_properties(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                deny_extra_properties(value);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -581,6 +638,9 @@ fn parse_scan_result(raw: &str, existing_ids: &HashSet<QuantityId>) -> Result<Sc
             variable.quantity_id = None;
         }
     }
+    // the agent knows no equation ids, so any related entries are hallucinated;
+    // dangling ids would be invisible in the editor and fail the store's FK on insert
+    equation.related.clear();
     let new_quantities = quantities
         .into_iter()
         .filter(|quantity| !existing_ids.contains(&quantity.id))
@@ -704,6 +764,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_scan_result_clears_hallucinated_related() {
+        let mut equation = Equation::new("Energy".to_string(), "E=mc^2".to_string());
+        equation.related = vec![nullspace_core::EquationId::new()];
+        let raw = serde_json::to_string(&json!({
+            "quantities": [],
+            "equations": [equation],
+        }))
+        .unwrap();
+
+        let result = parse_scan_result(&raw, &HashSet::new()).unwrap();
+
+        assert!(result.equation.related.is_empty());
+    }
+
+    #[test]
     fn build_prompt_embeds_schema_and_quantities() {
         let quantity = Quantity::new("E".to_string());
         let schema = serde_json::to_string(&crate::export_file_schema()).unwrap();
@@ -713,5 +788,38 @@ mod tests {
         assert!(prompt.contains("capture.png"));
         assert!(prompt.contains("properties"));
         assert!(prompt.contains("\"E\""));
+    }
+
+    #[test]
+    fn codex_output_schema_denies_extra_properties() {
+        let schema = crate::export_file_schema();
+        let value: serde_json::Value =
+            serde_json::from_str(&codex_output_schema_json(&schema).unwrap()).unwrap();
+
+        assert_object_schemas_are_strict(&value);
+    }
+
+    fn assert_object_schemas_are_strict(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if map.get("type").and_then(|value| value.as_str()) == Some("object")
+                    || map.contains_key("properties")
+                {
+                    assert_eq!(
+                        map.get("additionalProperties"),
+                        Some(&serde_json::Value::Bool(false))
+                    );
+                }
+                for value in map.values() {
+                    assert_object_schemas_are_strict(value);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    assert_object_schemas_are_strict(value);
+                }
+            }
+            _ => {}
+        }
     }
 }

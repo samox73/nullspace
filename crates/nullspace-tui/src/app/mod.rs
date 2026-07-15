@@ -411,7 +411,15 @@ impl AppState {
         self.force_preview_redraw();
 
         match command.and_then(command_action) {
-            Some(action) => self.apply(action),
+            Some(action) => {
+                // leaving scan review via any command other than :rescan abandons the
+                // review; discard it so scan_review/staged state can't leak into the
+                // next editor session
+                if self.scan_review && !matches!(action, crate::action::Action::Rescan) {
+                    self.discard_scan();
+                }
+                self.apply(action)
+            }
             None => {
                 self.status = format!("Unknown command: {input}");
             }

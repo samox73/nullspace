@@ -1016,6 +1016,14 @@ fn scan_settings_cycle_model_and_effort() {
 }
 
 #[test]
+fn scan_q_quits() {
+    let mut app = test_app();
+    app.start_scan(super::ScanAgent::Claude);
+
+    assert!(matches!(map_key(key('q'), &app), Action::Quit));
+}
+
+#[test]
 fn scan_review_zoom_persists_preview_size() {
     let mut app = test_app();
     let equation = Equation::new("Scanned zoom".to_string(), "E_{zoom}=m c^2".to_string());

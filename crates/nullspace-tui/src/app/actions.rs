@@ -252,6 +252,10 @@ impl AppState {
                 self.scan_cycle_effort();
                 Ok(())
             }
+            Action::ScanReview => {
+                self.open_scan_review();
+                Ok(())
+            }
             Action::Rescan => self.rescan(),
             Action::OpenCmdline => {
                 self.cmdline = Some(CmdlineState {
@@ -448,13 +452,14 @@ impl AppState {
                         self.editor = None;
                         Mode::Browser
                     }
-                    Mode::Search | Mode::Cmdline | Mode::Browser => Mode::Browser,
+                    // Mode::Scan is handled by the early return above; the arm here only
+                    // keeps the match exhaustive
+                    Mode::Search | Mode::Cmdline | Mode::Browser | Mode::Scan => Mode::Browser,
                     Mode::Trash => Mode::Browser,
                     Mode::TagPicker => Mode::Browser,
                     Mode::QuantityPicker => Mode::Browser,
                     Mode::QuantityForm => Mode::QuantityPicker,
                     Mode::QuantityResolver => Mode::Editor,
-                    Mode::Scan => Mode::Browser,
                 };
                 self.schedule_selected();
                 Ok(())

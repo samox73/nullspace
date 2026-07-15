@@ -25,6 +25,18 @@ Edit the file in place. It must stay valid JSON in the same schema.
   `authors`, `year`, `title`, `doi`, `url` (prefer the DOI URL). Only add a
   reference you are confident in - an empty list is better than a guess. Never
   invent `pages`.
+- complete `quantities` with all symbols from `equations` but do NOT create
+  duplicate names/symbols. The `quantities` list has the following item schema:
+  ```json
+  {
+    "id": "UUID",
+    "symbol": "\\Gamma",
+    "name": "",
+    "description": "full two-particle vertex",
+    "units": ""
+  },
+  ```
+  notice the double `\` inside the symbol.
 
 ## Verify the following against the internet:
 

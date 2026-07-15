@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExportFile",
+  "type": "object",
+  "properties": {
+    "equations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Equation"
+      }
+    },
+    "quantities": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Quantity"
+      }
+    }
+  },
+  "required": [
+    "quantities",
+    "equations"
+  ],
+  "$defs": {
+    "Equation": {
+      "type": "object",
+      "properties": {
+        "assumptions": {
+          "type": "string",
+          "default": ""
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/EquationId"
+        },
+        "latex": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "px_height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Reference"
+          }
+        },
+        "related": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EquationId"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Variable"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "assumptions",
+        "latex",
+        "references",
+        "tags",
+        "variables",
+        "related",
+        "px_height",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "EquationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Quantity": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "default": ""
+        },
+        "id": {
+          "$ref": "#/$defs/QuantityId"
+        },
+        "name": {
+          "type": "string",
+          "default": ""
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "units": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "id",
+        "symbol",
+        "name",
+        "description",
+        "units"
+      ]
+    },
+    "QuantityId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Reference": {
+      "type": "object",
+      "properties": {
+        "authors": {
+          "type": "string",
+          "default": ""
+        },
+        "doi": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "pages": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "title": {
+          "type": "string",
+          "default": ""
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "year": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        }
+      },
+      "required": [
+        "authors",
+        "year",
+        "title",
+        "doi",
+        "url",
+        "pages"
+      ]
+    },
+    "Variable": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "quantity_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "symbol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "description",
+        "quantity_id"
+      ]
+    }
+  }
+}

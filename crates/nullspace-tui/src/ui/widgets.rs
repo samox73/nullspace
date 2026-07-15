@@ -344,6 +344,15 @@ pub fn scan_screen(frame: &mut Frame<'_>, app: &AppState) {
             let title = format!("Scanning... {}", app.cache_spinner());
             scan_logs(frame, outer[0], &title, &scan.logs, None);
         }
+        ScanPhase::Ready => {
+            scan_logs(
+                frame,
+                outer[0],
+                "Scan complete",
+                &scan.logs,
+                Some("enter: review | p: scan new image | Esc: discard & leave"),
+            );
+        }
         ScanPhase::Failed => {
             scan_logs(
                 frame,
@@ -387,15 +396,25 @@ fn scan_logs(
 }
 
 fn visible_scan_log_lines(logs: &[String], height: usize) -> Vec<String> {
-    let rows = logs
-        .iter()
-        .flat_map(|log| {
-            let rows = log.lines().collect::<Vec<_>>();
-            if rows.is_empty() { vec![""] } else { rows }
-        })
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    rows[rows.len().saturating_sub(height)..].to_vec()
+    // walk backwards and stop at `height` rows so a frame never clones the whole buffer
+    let mut rows = Vec::new();
+    for log in logs.iter().rev() {
+        if rows.len() >= height {
+            break;
+        }
+        let mut log_rows: Vec<&str> = log.lines().collect();
+        if log_rows.is_empty() {
+            log_rows.push("");
+        }
+        for row in log_rows.into_iter().rev() {
+            if rows.len() >= height {
+                break;
+            }
+            rows.push(row.to_owned());
+        }
+    }
+    rows.reverse();
+    rows
 }
 
 fn centered_lines_area(area: Rect, height: u16) -> Rect {

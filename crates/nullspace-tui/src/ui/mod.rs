@@ -65,6 +65,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             match app.cmdline.as_ref().map(|cmdline| cmdline.return_mode) {
                 Some(Mode::QuantityPicker) => widgets::quantity_picker(frame, app),
                 Some(Mode::Scan) => widgets::scan_screen(frame, app),
+                Some(Mode::Editor) => editor::draw(frame, app),
                 _ => browser::draw(frame, app),
             }
             widgets::cmdline(frame, cmdline_area, app);

@@ -20,6 +20,7 @@ pub enum Action {
     ScanPaste,
     ScanCycleModel,
     ScanCycleEffort,
+    ScanReview,
     Rescan,
     OpenEquations,
     OpenTrash,
